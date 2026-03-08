@@ -65,6 +65,8 @@ public partial class OverlayWindow : Window
     private const int HOTKEY_PAN_RANGE_DOWN = 6;
     private const int HOTKEY_SPECTRUM = 7;
     private const int HOTKEY_DEBUG = 8;
+    private const int HOTKEY_ADAPT_TIME = 9;
+    private const int HOTKEY_NOISE_FLOOR = 10;
     private const uint MOD_CTRL_SHIFT = 0x0002 | 0x0004;
     private const uint VK_O = 0x4F;
     private const uint VK_UP = 0x26;
@@ -74,6 +76,12 @@ public partial class OverlayWindow : Window
     private const uint VK_Q = 0x51;
     private const uint VK_S = 0x53;
     private const uint VK_D = 0x44;
+    private const uint VK_A = 0x41;
+    private const uint VK_N = 0x4E;
+
+    // Cycle values for hotkeys
+    private static readonly double[] AdaptTimeValues = { 0.5, 1.5, 3.0 };
+    private static readonly double[] NoiseFloorValues = { -60, -40, -20 };
 
     [DllImport("user32.dll")]
     private static extern int GetWindowLong(IntPtr hwnd, int index);
@@ -93,6 +101,7 @@ public partial class OverlayWindow : Window
     private readonly DispatcherTimer _renderTimer;
     private DirectionAnalyzer? _analyzer;
     private AdaptiveThreshold? _adaptiveThreshold;
+    private FrequencyBandFilter? _bandFilter;
     private AppConfig? _config;
     private bool _overlayVisible = true;
     private bool _spectrumVisible = false;
@@ -139,6 +148,11 @@ public partial class OverlayWindow : Window
         _adaptiveThreshold = threshold;
     }
 
+    public void SetBandFilter(FrequencyBandFilter filter)
+    {
+        _bandFilter = filter;
+    }
+
     public void SetConfig(AppConfig config)
     {
         _config = config;
@@ -177,6 +191,8 @@ public partial class OverlayWindow : Window
         RegisterHotKey(_hwnd, HOTKEY_PAN_RANGE_DOWN, MOD_CTRL_SHIFT, VK_LEFT);
         RegisterHotKey(_hwnd, HOTKEY_SPECTRUM, MOD_CTRL_SHIFT, VK_S);
         RegisterHotKey(_hwnd, HOTKEY_DEBUG, MOD_CTRL_SHIFT, VK_D);
+        RegisterHotKey(_hwnd, HOTKEY_ADAPT_TIME, MOD_CTRL_SHIFT, VK_A);
+        RegisterHotKey(_hwnd, HOTKEY_NOISE_FLOOR, MOD_CTRL_SHIFT, VK_N);
 
         var source = HwndSource.FromHwnd(_hwnd);
         source?.AddHook(WndProc);
@@ -234,6 +250,14 @@ public partial class OverlayWindow : Window
                     SaveConfig();
                     handled = true;
                     break;
+                case HOTKEY_ADAPT_TIME:
+                    CycleAdaptTime();
+                    handled = true;
+                    break;
+                case HOTKEY_NOISE_FLOOR:
+                    CycleNoiseFloor();
+                    handled = true;
+                    break;
                 case HOTKEY_QUIT:
                     SaveConfig();
                     Application.Current.Shutdown();
@@ -242,6 +266,30 @@ public partial class OverlayWindow : Window
             }
         }
         return IntPtr.Zero;
+    }
+
+    private void CycleAdaptTime()
+    {
+        if (_adaptiveThreshold == null || _config == null) return;
+        double current = _adaptiveThreshold.AdaptationTimeSec;
+        int idx = Array.IndexOf(AdaptTimeValues, current);
+        int next = (idx + 1) % AdaptTimeValues.Length;
+        _adaptiveThreshold.AdaptationTimeSec = AdaptTimeValues[next];
+        _config.AdaptiveThreshold.AdaptationTimeSec = AdaptTimeValues[next];
+        FlashSetting("AdaptTime");
+        SaveConfig();
+    }
+
+    private void CycleNoiseFloor()
+    {
+        if (_bandFilter == null || _config == null) return;
+        double current = _bandFilter.NoiseFloorDb;
+        int idx = Array.IndexOf(NoiseFloorValues, current);
+        int next = (idx + 1) % NoiseFloorValues.Length;
+        _bandFilter.NoiseFloorDb = NoiseFloorValues[next];
+        _config.FrequencyBands.NoiseFloorDb = NoiseFloorValues[next];
+        FlashSetting("NoiseFloor");
+        SaveConfig();
     }
 
     protected override void OnClosed(EventArgs e)
@@ -256,6 +304,8 @@ public partial class OverlayWindow : Window
             UnregisterHotKey(_hwnd, HOTKEY_PAN_RANGE_DOWN);
             UnregisterHotKey(_hwnd, HOTKEY_SPECTRUM);
             UnregisterHotKey(_hwnd, HOTKEY_DEBUG);
+            UnregisterHotKey(_hwnd, HOTKEY_ADAPT_TIME);
+            UnregisterHotKey(_hwnd, HOTKEY_NOISE_FLOOR);
         }
         base.OnClosed(e);
     }
@@ -487,11 +537,14 @@ public partial class OverlayWindow : Window
         string bandsSection = BuildBandsSection();
 
         double triggerFactor = data?.TriggerFactor ?? 1.5;
-        double adaptTime = _config?.AdaptiveThreshold.AdaptationTimeSec ?? 3.0;
+        double adaptTime = _adaptiveThreshold?.AdaptationTimeSec ?? 1.5;
+        double noiseFloor = _bandFilter?.NoiseFloorDb ?? -40;
 
         // Settings section with highlight support
         bool hlSens = _highlightSetting == "Sensitivity";
         bool hlPan = _highlightSetting == "MaxExpectedPan";
+        bool hlAdapt = _highlightSetting == "AdaptTime";
+        bool hlNoise = _highlightSetting == "NoiseFloor";
         string sensVal = _analyzer != null ? $"{_analyzer.IntensityThreshold:F3}" : "0.010";
         string panVal = _analyzer != null ? $"{_analyzer.MaxExpectedPan:F2}" : "0.25";
 
@@ -511,7 +564,8 @@ public partial class OverlayWindow : Window
         sb.AppendLine($"{(hlSens ? ">>>" : "   ")} Sensitivity:     {sensVal}  [Ctrl+Shift+Up/Down]");
         sb.AppendLine($"{(hlPan ? ">>>" : "   ")} MaxExpectedPan:  {panVal}  [Ctrl+Shift+Left/Right]");
         sb.AppendLine($"    Trigger factor:  {triggerFactor:F1}");
-        sb.AppendLine($"    Adaptation time: {adaptTime:F1}s");
+        sb.AppendLine($"{(hlAdapt ? ">>>" : "   ")} Adapt time:     {adaptTime:F1}s  [Ctrl+Shift+A]");
+        sb.AppendLine($"{(hlNoise ? ">>>" : "   ")} Noise floor:    {noiseFloor:F0}dB  [Ctrl+Shift+N]");
         sb.AppendLine();
         sb.AppendLine("-- Performance --");
         sb.AppendLine($"Frame time:        {_lastFrameTimeMs:F1}ms");
@@ -563,6 +617,8 @@ public partial class OverlayWindow : Window
             "Ctrl+Shift+Down   Sensitivity -\n" +
             "Ctrl+Shift+Right  MaxPan +0.05\n" +
             "Ctrl+Shift+Left   MaxPan -0.05\n" +
+            "Ctrl+Shift+A      Adapt time cycle\n" +
+            "Ctrl+Shift+N      Noise floor cycle\n" +
             "Ctrl+Shift+Q      Quit";
 
         var panel = CreateDebugTextBlock(controlsText);

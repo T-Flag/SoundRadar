@@ -35,6 +35,7 @@ public partial class App : Application
         overlay.SetAnalyzer(analyzer);
         overlay.SetConfig(config);
         overlay.SetAdaptiveThreshold(adaptiveThreshold);
+        overlay.SetBandFilter(bandFilter);
 
         if (!config.OverlayVisible)
             overlay.SetOverlayVisible(false);

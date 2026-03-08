@@ -5,7 +5,7 @@ namespace SoundRadar.Analysis;
 public class FrequencyBandFilter
 {
     private readonly (string Name, double LowHz, double HighHz)[] _bands;
-    private readonly double _noiseFloorDb;
+    private double _noiseFloorDb;
     private readonly double _ceilingDb;
 
     public FrequencyBandFilter(
@@ -30,6 +30,12 @@ public class FrequencyBandFilter
         };
         _noiseFloorDb = noiseFloorDb;
         _ceilingDb = ceilingDb;
+    }
+
+    public double NoiseFloorDb
+    {
+        get => _noiseFloorDb;
+        set => _noiseFloorDb = value;
     }
 
     /// <summary>

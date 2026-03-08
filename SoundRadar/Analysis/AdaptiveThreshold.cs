@@ -5,7 +5,7 @@ namespace SoundRadar.Analysis;
 
 public class AdaptiveThreshold
 {
-    private readonly double _adaptationTimeSec;
+    private double _adaptationTimeSec;
     private readonly double _triggerFactor;
     private readonly ConcurrentDictionary<string, double> _averages = new();
 
@@ -18,6 +18,11 @@ public class AdaptiveThreshold
     }
 
     public double TriggerFactor => _triggerFactor;
+    public double AdaptationTimeSec
+    {
+        get => _adaptationTimeSec;
+        set => _adaptationTimeSec = value;
+    }
 
     public double GetAverage(string bandName)
     {

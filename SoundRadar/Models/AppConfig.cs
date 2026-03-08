@@ -5,7 +5,7 @@ namespace SoundRadar.Models;
 
 public class AdaptiveThresholdConfig
 {
-    public double AdaptationTimeSec { get; set; } = 3.0;
+    public double AdaptationTimeSec { get; set; } = 1.5;
     public double TriggerFactor { get; set; } = 1.5;
 }
 
@@ -15,7 +15,7 @@ public class FrequencyBandsConfig
     public double[] LowMid { get; set; } = [80, 400];
     public double[] Mid { get; set; } = [400, 1800];
     public double[] HighMid { get; set; } = [1800, 6000];
-    public double NoiseFloorDb { get; set; } = -60;
+    public double NoiseFloorDb { get; set; } = -40;
     public double CeilingDb { get; set; } = 0;
 }
 
