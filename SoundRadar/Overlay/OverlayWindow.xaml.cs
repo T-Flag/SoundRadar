@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using SoundRadar.Analysis;
@@ -14,10 +15,25 @@ namespace SoundRadar.Overlay;
 
 public partial class OverlayWindow : Window
 {
+    // --- Configurable colors ---
+    private static readonly Color ColorLeft = (Color)ColorConverter.ConvertFromString("#00D4FF");
+    private static readonly Color ColorRight = (Color)ColorConverter.ConvertFromString("#FF8C00");
+    private static readonly Color ColorCenter = Colors.White;
+    private const float CenterPanThreshold = 0.1f;
+
+    // --- Arc geometry ---
+    private const double ArcVerticalSpan = 0.35;   // portion of screen height
+    private const double ArcMaxThickness = 40.0;    // max thickness in pixels at full intensity
+    private const double ArcMinThickness = 6.0;     // min thickness
+    private const double ArcEdgeMargin = 8.0;       // pixels from screen edge
+    private const double GlowRadius = 15.0;
+
+    // --- Win32 ---
     private const int WS_EX_TRANSPARENT = 0x00000020;
     private const int GWL_EXSTYLE = -20;
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 0x0100;
+    private const int VK_F9 = 0x78;
 
     [DllImport("user32.dll")]
     private static extern int GetWindowLong(IntPtr hwnd, int index);
@@ -47,6 +63,7 @@ public partial class OverlayWindow : Window
     private DirectionAnalyzer? _analyzer;
     private TextBlock? _thresholdLabel;
     private DispatcherTimer? _labelFadeTimer;
+    private bool _overlayVisible = true;
 
     public OverlayWindow()
     {
@@ -87,12 +104,16 @@ public partial class OverlayWindow : Window
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
-        if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN && _analyzer != null)
+        if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
         {
             int vkCode = Marshal.ReadInt32(lParam);
             bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
 
-            if (ctrl && vkCode == 0xBB) // Ctrl + =  (OemPlus)
+            if (vkCode == VK_F9)
+            {
+                Dispatcher.Invoke(ToggleOverlay);
+            }
+            else if (ctrl && vkCode == 0xBB && _analyzer != null) // Ctrl+=
             {
                 Dispatcher.Invoke(() =>
                 {
@@ -100,7 +121,7 @@ public partial class OverlayWindow : Window
                     ShowThresholdLabel();
                 });
             }
-            else if (ctrl && vkCode == 0xBD) // Ctrl + - (OemMinus)
+            else if (ctrl && vkCode == 0xBD && _analyzer != null) // Ctrl+-
             {
                 Dispatcher.Invoke(() =>
                 {
@@ -112,6 +133,12 @@ public partial class OverlayWindow : Window
         return CallNextHookEx(_hookId, nCode, wParam, lParam);
     }
 
+    private void ToggleOverlay()
+    {
+        _overlayVisible = !_overlayVisible;
+        OverlayCanvas.Visibility = _overlayVisible ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void ShowThresholdLabel()
     {
         if (_analyzer == null) return;
@@ -120,13 +147,14 @@ public partial class OverlayWindow : Window
         {
             _thresholdLabel = new TextBlock
             {
-                FontSize = 24,
-                Foreground = new SolidColorBrush(Colors.White),
-                Background = new SolidColorBrush(Color.FromArgb(180, 0, 0, 0)),
-                Padding = new Thickness(12, 6, 12, 6),
+                FontSize = 18,
+                FontFamily = new FontFamily("Consolas"),
+                Foreground = new SolidColorBrush(Color.FromArgb(200, 255, 255, 255)),
+                Background = new SolidColorBrush(Color.FromArgb(140, 0, 0, 0)),
+                Padding = new Thickness(10, 5, 10, 5),
             };
-            Canvas.SetLeft(_thresholdLabel, 20);
-            Canvas.SetTop(_thresholdLabel, 20);
+            Canvas.SetRight(_thresholdLabel, 20);
+            Canvas.SetBottom(_thresholdLabel, 20);
         }
 
         _thresholdLabel.Text = $"Seuil : {_analyzer.IntensityThreshold:F3}";
@@ -157,11 +185,10 @@ public partial class OverlayWindow : Window
         if (hasLabel)
             OverlayCanvas.Children.Add(_thresholdLabel!);
 
+        if (!_overlayVisible) return;
+
         double width = ActualWidth;
         double height = ActualHeight;
-        double centerX = width / 2;
-        double centerY = height / 2;
-        double radius = Math.Min(width, height) * 0.4;
 
         var active = new List<SoundEvent>();
         while (_events.TryDequeue(out var evt))
@@ -173,51 +200,117 @@ public partial class OverlayWindow : Window
         foreach (var evt in active)
         {
             _events.Enqueue(evt);
-            DrawArc(evt, centerX, centerY, radius);
+            DrawEdgeArc(evt, width, height);
         }
     }
 
-    private void DrawArc(SoundEvent evt, double cx, double cy, double radius)
+    private void DrawEdgeArc(SoundEvent evt, double screenWidth, double screenHeight)
     {
         float decay = evt.GetDecayFactor();
         if (decay <= 0) return;
 
-        double angle = DirectionAnalyzer.PanToAngle(evt.Pan);
+        float absPan = Math.Abs(evt.Pan);
+        bool isLeft = evt.Pan < -CenterPanThreshold;
+        bool isRight = evt.Pan > CenterPanThreshold;
+        bool isCenter = !isLeft && !isRight;
 
-        double arcSpan = 30;
-        double startAngle = angle - 90 - arcSpan / 2;
-        double endAngle = angle - 90 + arcSpan / 2;
+        // Pick color
+        Color baseColor = isLeft ? ColorLeft : isRight ? ColorRight : ColorCenter;
 
-        double innerRadius = radius * 0.85;
-        double outerRadius = radius;
+        // Opacity based on intensity and decay
+        byte opacity = (byte)(255 * Math.Min(1f, evt.Intensity * 2f) * decay);
+        if (isCenter) opacity = (byte)(opacity * 0.5); // reduced opacity for center
 
-        var startRad = startAngle * Math.PI / 180;
-        var endRad = endAngle * Math.PI / 180;
+        // Arc thickness based on intensity and decay
+        double thickness = ArcMinThickness + (ArcMaxThickness - ArcMinThickness) * evt.Intensity * decay;
 
-        var p1 = new Point(cx + innerRadius * Math.Cos(startRad), cy + innerRadius * Math.Sin(startRad));
-        var p2 = new Point(cx + outerRadius * Math.Cos(startRad), cy + outerRadius * Math.Sin(startRad));
-        var p3 = new Point(cx + outerRadius * Math.Cos(endRad), cy + outerRadius * Math.Sin(endRad));
-        var p4 = new Point(cx + innerRadius * Math.Cos(endRad), cy + innerRadius * Math.Sin(endRad));
+        // Vertical position: pan ±1.0 = middle of edge, pan closer to 0 = higher (toward "front")
+        // Map absPan to vertical center of the arc: 0 = top quarter, 1 = center
+        double verticalCenter = screenHeight * (0.2 + 0.3 * absPan);
 
-        var figure = new PathFigure { StartPoint = p1, IsClosed = true };
-        figure.Segments.Add(new LineSegment(p2, true));
-        figure.Segments.Add(new ArcSegment(p3, new Size(outerRadius, outerRadius), 0, false, SweepDirection.Clockwise, true));
-        figure.Segments.Add(new LineSegment(p4, true));
-        figure.Segments.Add(new ArcSegment(p1, new Size(innerRadius, innerRadius), 0, false, SweepDirection.Counterclockwise, true));
+        double arcHeight = screenHeight * ArcVerticalSpan * (0.5 + 0.5 * evt.Intensity);
 
-        byte opacity = (byte)(255 * evt.Intensity * decay);
-        var color = evt.Pan < 0
-            ? Color.FromArgb(opacity, 0, 180, 255)   // Blue for left
-            : Color.FromArgb(opacity, 255, 100, 0);   // Orange for right
+        double top = verticalCenter - arcHeight / 2;
+        double bottom = verticalCenter + arcHeight / 2;
+
+        // Clamp to screen
+        top = Math.Max(0, top);
+        bottom = Math.Min(screenHeight, bottom);
+
+        if (isCenter)
+        {
+            // Draw arcs on both sides for center sounds
+            DrawSingleEdgeArc(true, top, bottom, thickness, baseColor, opacity, screenWidth, decay);
+            DrawSingleEdgeArc(false, top, bottom, thickness, baseColor, opacity, screenWidth, decay);
+        }
+        else
+        {
+            DrawSingleEdgeArc(isLeft, top, bottom, thickness, baseColor, opacity, screenWidth, decay);
+        }
+    }
+
+    private void DrawSingleEdgeArc(bool leftSide, double top, double bottom, double thickness,
+        Color baseColor, byte opacity, double screenWidth, float decay)
+    {
+        double arcHeight = bottom - top;
+        double midY = (top + bottom) / 2;
+
+        // X position: on the edge of the screen
+        double edgeX = leftSide ? ArcEdgeMargin : screenWidth - ArcEdgeMargin;
+
+        // Build a crescent arc using a bezier curve
+        double curveDepth = thickness * 1.5;
+        double innerDepth = curveDepth - thickness;
+
+        double xDir = leftSide ? 1 : -1;
+
+        // Outer curve points
+        var pTopOuter = new Point(edgeX, top);
+        var pBottomOuter = new Point(edgeX, bottom);
+        var pMidOuter = new Point(edgeX + xDir * curveDepth, midY);
+
+        // Inner curve points
+        var pTopInner = new Point(edgeX, top);
+        var pBottomInner = new Point(edgeX, bottom);
+        var pMidInner = new Point(edgeX + xDir * innerDepth, midY);
+
+        // Build path: outer curve down, then inner curve back up
+        var figure = new PathFigure { StartPoint = pTopOuter, IsClosed = true, IsFilled = true };
+
+        // Outer curve (top → bottom via mid)
+        figure.Segments.Add(new QuadraticBezierSegment(pMidOuter, pBottomOuter, true));
+
+        // Inner curve (bottom → top via mid) — closing the crescent
+        figure.Segments.Add(new QuadraticBezierSegment(pMidInner, pTopInner, true));
+
+        var color = Color.FromArgb(opacity, baseColor.R, baseColor.G, baseColor.B);
+        var glowColor = Color.FromArgb((byte)(opacity * 0.4), baseColor.R, baseColor.G, baseColor.B);
 
         var path = new Path
         {
             Data = new PathGeometry(new[] { figure }),
             Fill = new SolidColorBrush(color),
-            Stroke = new SolidColorBrush(Color.FromArgb((byte)(opacity * 0.5), 255, 255, 255)),
-            StrokeThickness = 1
+            Effect = new BlurEffect
+            {
+                Radius = GlowRadius * decay,
+                KernelType = KernelType.Gaussian
+            }
         };
 
         OverlayCanvas.Children.Add(path);
+
+        // Draw a sharper inner arc on top for crispness
+        var sharpFigure = new PathFigure { StartPoint = pTopOuter, IsClosed = true, IsFilled = true };
+        sharpFigure.Segments.Add(new QuadraticBezierSegment(pMidOuter, pBottomOuter, true));
+        sharpFigure.Segments.Add(new QuadraticBezierSegment(pMidInner, pTopInner, true));
+
+        var sharpColor = Color.FromArgb((byte)(opacity * 0.8), baseColor.R, baseColor.G, baseColor.B);
+        var sharpPath = new Path
+        {
+            Data = new PathGeometry(new[] { sharpFigure }),
+            Fill = new SolidColorBrush(sharpColor),
+        };
+
+        OverlayCanvas.Children.Add(sharpPath);
     }
 }
