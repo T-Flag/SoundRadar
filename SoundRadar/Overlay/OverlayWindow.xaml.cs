@@ -69,6 +69,7 @@ public partial class OverlayWindow : Window
     private readonly ConcurrentQueue<SoundEvent> _events = new();
     private readonly DispatcherTimer _renderTimer;
     private DirectionAnalyzer? _analyzer;
+    private AppConfig? _config;
     private TextBlock? _statusLabel;
     private DispatcherTimer? _labelFadeTimer;
     private bool _overlayVisible = true;
@@ -90,6 +91,17 @@ public partial class OverlayWindow : Window
     public void SetAnalyzer(DirectionAnalyzer analyzer)
     {
         _analyzer = analyzer;
+    }
+
+    public void SetConfig(AppConfig config)
+    {
+        _config = config;
+    }
+
+    public void SetOverlayVisible(bool visible)
+    {
+        _overlayVisible = visible;
+        OverlayCanvas.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -119,29 +131,35 @@ public partial class OverlayWindow : Window
             {
                 case HOTKEY_TOGGLE:
                     ToggleOverlay();
+                    SaveConfig();
                     handled = true;
                     break;
                 case HOTKEY_SENS_UP:
                     _analyzer.IntensityThreshold /= 1.5f;
                     ShowStatusLabel($"Seuil : {_analyzer.IntensityThreshold:F3}");
+                    SaveConfig();
                     handled = true;
                     break;
                 case HOTKEY_SENS_DOWN:
                     _analyzer.IntensityThreshold *= 1.5f;
                     ShowStatusLabel($"Seuil : {_analyzer.IntensityThreshold:F3}");
+                    SaveConfig();
                     handled = true;
                     break;
                 case HOTKEY_PAN_RANGE_UP:
                     _analyzer.MaxExpectedPan += 0.05f;
                     ShowStatusLabel($"Pan max : {_analyzer.MaxExpectedPan:F2}");
+                    SaveConfig();
                     handled = true;
                     break;
                 case HOTKEY_PAN_RANGE_DOWN:
                     _analyzer.MaxExpectedPan -= 0.05f;
                     ShowStatusLabel($"Pan max : {_analyzer.MaxExpectedPan:F2}");
+                    SaveConfig();
                     handled = true;
                     break;
                 case HOTKEY_QUIT:
+                    SaveConfig();
                     Application.Current.Shutdown();
                     handled = true;
                     break;
@@ -168,6 +186,15 @@ public partial class OverlayWindow : Window
     {
         _overlayVisible = !_overlayVisible;
         OverlayCanvas.Visibility = _overlayVisible ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void SaveConfig()
+    {
+        if (_config == null || _analyzer == null) return;
+        _config.IntensityThreshold = _analyzer.IntensityThreshold;
+        _config.MaxExpectedPan = _analyzer.MaxExpectedPan;
+        _config.OverlayVisible = _overlayVisible;
+        _config.Save();
     }
 
     private void ShowStatusLabel(string text)

@@ -21,7 +21,7 @@ public class DirectionAnalyzer
         set => _maxExpectedPan = Math.Clamp(value, 0.1f, 1f);
     }
 
-    public DirectionAnalyzer(float intensityThreshold = 0.01f, float maxExpectedPan = 0.75f)
+    public DirectionAnalyzer(float intensityThreshold = 0.010f, float maxExpectedPan = 0.25f)
     {
         _intensityThreshold = intensityThreshold;
         _maxExpectedPan = maxExpectedPan;
