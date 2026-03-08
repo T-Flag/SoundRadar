@@ -516,7 +516,8 @@ public partial class OverlayWindow : Window
         sb.AppendLine("-- Performance --");
         sb.AppendLine($"Frame time:        {_lastFrameTimeMs:F1}ms");
         sb.AppendLine($"Active events:     {activeEvents}");
-        sb.Append($"Events/sec:        {_eventsPerSec}");
+        sb.AppendLine($"Events/sec:        {_eventsPerSec}");
+        sb.Append($"FFT updates:       {_adaptiveThreshold?.ProcessCallCount ?? 0}");
 
         var panel = CreateDebugTextBlock(sb.ToString());
         Canvas.SetLeft(panel, 15);
