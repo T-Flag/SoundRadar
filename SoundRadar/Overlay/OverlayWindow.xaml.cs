@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
@@ -22,18 +21,27 @@ public partial class OverlayWindow : Window
     private const float CenterPanThreshold = 0.1f;
 
     // --- Radar geometry ---
-    private const double RadiusFraction = 0.4;       // radar radius as fraction of min(width,height)
-    private const double ArcSpanDegrees = 30.0;      // angular width of each arc
-    private const double ArcMaxThickness = 0.20;     // max thickness as fraction of radius
-    private const double ArcMinThickness = 0.04;     // min thickness as fraction of radius
+    private const double RadiusFraction = 0.4;
+    private const double ArcSpanDegrees = 30.0;
+    private const double ArcMaxThickness = 0.20;
+    private const double ArcMinThickness = 0.04;
     private const double GlowRadius = 12.0;
 
-    // --- Win32 ---
+    // --- Win32 click-through ---
     private const int WS_EX_TRANSPARENT = 0x00000020;
     private const int GWL_EXSTYLE = -20;
-    private const int WH_KEYBOARD_LL = 13;
-    private const int WM_KEYDOWN = 0x0100;
-    private const int VK_F9 = 0x78;
+
+    // --- Global hotkeys via RegisterHotKey ---
+    private const int WM_HOTKEY = 0x0312;
+    private const int HOTKEY_TOGGLE = 1;
+    private const int HOTKEY_SENS_UP = 2;
+    private const int HOTKEY_SENS_DOWN = 3;
+    private const int HOTKEY_QUIT = 4;
+    private const uint MOD_CTRL_SHIFT = 0x0002 | 0x0004; // MOD_CONTROL | MOD_SHIFT
+    private const uint VK_O = 0x4F;
+    private const uint VK_UP = 0x26;
+    private const uint VK_DOWN = 0x28;
+    private const uint VK_Q = 0x51;
 
     [DllImport("user32.dll")]
     private static extern int GetWindowLong(IntPtr hwnd, int index);
@@ -41,29 +49,21 @@ public partial class OverlayWindow : Window
     [DllImport("user32.dll")]
     private static extern int SetWindowLong(IntPtr hwnd, int index, int newStyle);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
-
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 
     [DllImport("user32.dll")]
-    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr GetModuleHandle(string? lpModuleName);
-
-    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
     private readonly ConcurrentQueue<SoundEvent> _events = new();
     private readonly DispatcherTimer _renderTimer;
-    private IntPtr _hookId = IntPtr.Zero;
-    private LowLevelKeyboardProc? _hookProc;
     private DirectionAnalyzer? _analyzer;
     private TextBlock? _thresholdLabel;
     private DispatcherTimer? _labelFadeTimer;
     private bool _overlayVisible = true;
+    private IntPtr _hwnd;
 
     public OverlayWindow()
     {
@@ -85,52 +85,63 @@ public partial class OverlayWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        var hwnd = new WindowInteropHelper(this).Handle;
-        int extStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-        SetWindowLong(hwnd, GWL_EXSTYLE, extStyle | WS_EX_TRANSPARENT);
+        _hwnd = new WindowInteropHelper(this).Handle;
 
-        _hookProc = HookCallback;
-        using var curProcess = System.Diagnostics.Process.GetCurrentProcess();
-        using var curModule = curProcess.MainModule!;
-        _hookId = SetWindowsHookEx(WH_KEYBOARD_LL, _hookProc, GetModuleHandle(curModule.ModuleName), 0);
+        // Click-through
+        int extStyle = GetWindowLong(_hwnd, GWL_EXSTYLE);
+        SetWindowLong(_hwnd, GWL_EXSTYLE, extStyle | WS_EX_TRANSPARENT);
+
+        // Register global hotkeys
+        RegisterHotKey(_hwnd, HOTKEY_TOGGLE, MOD_CTRL_SHIFT, VK_O);
+        RegisterHotKey(_hwnd, HOTKEY_SENS_UP, MOD_CTRL_SHIFT, VK_UP);
+        RegisterHotKey(_hwnd, HOTKEY_SENS_DOWN, MOD_CTRL_SHIFT, VK_DOWN);
+        RegisterHotKey(_hwnd, HOTKEY_QUIT, MOD_CTRL_SHIFT, VK_Q);
+
+        // Listen for WM_HOTKEY messages
+        var source = HwndSource.FromHwnd(_hwnd);
+        source?.AddHook(WndProc);
+    }
+
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == WM_HOTKEY)
+        {
+            int id = wParam.ToInt32();
+            switch (id)
+            {
+                case HOTKEY_TOGGLE:
+                    ToggleOverlay();
+                    handled = true;
+                    break;
+                case HOTKEY_SENS_UP when _analyzer != null:
+                    _analyzer.IntensityThreshold /= 1.5f; // lower threshold = more sensitive
+                    ShowThresholdLabel();
+                    handled = true;
+                    break;
+                case HOTKEY_SENS_DOWN when _analyzer != null:
+                    _analyzer.IntensityThreshold *= 1.5f; // higher threshold = less sensitive
+                    ShowThresholdLabel();
+                    handled = true;
+                    break;
+                case HOTKEY_QUIT:
+                    Application.Current.Shutdown();
+                    handled = true;
+                    break;
+            }
+        }
+        return IntPtr.Zero;
     }
 
     protected override void OnClosed(EventArgs e)
     {
-        if (_hookId != IntPtr.Zero)
-            UnhookWindowsHookEx(_hookId);
-        base.OnClosed(e);
-    }
-
-    private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
-    {
-        if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
+        if (_hwnd != IntPtr.Zero)
         {
-            int vkCode = Marshal.ReadInt32(lParam);
-            bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
-
-            if (vkCode == VK_F9)
-            {
-                Dispatcher.Invoke(ToggleOverlay);
-            }
-            else if (ctrl && vkCode == 0xBB && _analyzer != null) // Ctrl+=
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    _analyzer.IntensityThreshold *= 1.5f;
-                    ShowThresholdLabel();
-                });
-            }
-            else if (ctrl && vkCode == 0xBD && _analyzer != null) // Ctrl+-
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    _analyzer.IntensityThreshold /= 1.5f;
-                    ShowThresholdLabel();
-                });
-            }
+            UnregisterHotKey(_hwnd, HOTKEY_TOGGLE);
+            UnregisterHotKey(_hwnd, HOTKEY_SENS_UP);
+            UnregisterHotKey(_hwnd, HOTKEY_SENS_DOWN);
+            UnregisterHotKey(_hwnd, HOTKEY_QUIT);
         }
-        return CallNextHookEx(_hookId, nCode, wParam, lParam);
+        base.OnClosed(e);
     }
 
     private void ToggleOverlay()
@@ -211,22 +222,17 @@ public partial class OverlayWindow : Window
         float decay = evt.GetDecayFactor();
         if (decay <= 0) return;
 
-        // Color selection
         bool isLeft = evt.Pan < -CenterPanThreshold;
         bool isRight = evt.Pan > CenterPanThreshold;
         Color baseColor = isLeft ? ColorLeft : isRight ? ColorRight : ColorCenter;
 
-        // Opacity: intensity * decay, boosted for visibility, reduced for center
         byte opacity = (byte)(255 * Math.Min(1f, evt.Intensity * 2f) * decay);
         if (!isLeft && !isRight) opacity = (byte)(opacity * 0.5);
 
-        // Thickness proportional to intensity and decay
         double thicknessFrac = ArcMinThickness + (ArcMaxThickness - ArcMinThickness) * evt.Intensity * decay;
         double outerRadius = radius;
         double innerRadius = radius * (1.0 - thicknessFrac);
 
-        // Angular position from PanToAngle: 0°=top, negative=left, positive=right
-        // In WPF drawing coords: 0° is right (+X), so we offset by -90° to make 0° = top
         double angleDeg = DirectionAnalyzer.PanToAngle(evt.Pan);
         double halfSpan = ArcSpanDegrees / 2;
         double startAngleDeg = angleDeg - 90 - halfSpan;
@@ -235,13 +241,11 @@ public partial class OverlayWindow : Window
         double startRad = startAngleDeg * Math.PI / 180;
         double endRad = endAngleDeg * Math.PI / 180;
 
-        // Four corner points of the arc wedge
         var outerStart = new Point(cx + outerRadius * Math.Cos(startRad), cy + outerRadius * Math.Sin(startRad));
         var outerEnd = new Point(cx + outerRadius * Math.Cos(endRad), cy + outerRadius * Math.Sin(endRad));
         var innerEnd = new Point(cx + innerRadius * Math.Cos(endRad), cy + innerRadius * Math.Sin(endRad));
         var innerStart = new Point(cx + innerRadius * Math.Cos(startRad), cy + innerRadius * Math.Sin(startRad));
 
-        // Build crescent path
         var figure = new PathFigure { StartPoint = outerStart, IsClosed = true, IsFilled = true };
         figure.Segments.Add(new ArcSegment(outerEnd, new Size(outerRadius, outerRadius), 0, false, SweepDirection.Clockwise, true));
         figure.Segments.Add(new LineSegment(innerEnd, true));
@@ -249,7 +253,6 @@ public partial class OverlayWindow : Window
 
         var color = Color.FromArgb(opacity, baseColor.R, baseColor.G, baseColor.B);
 
-        // Glow layer (blurred, wider)
         var glowPath = new Path
         {
             Data = new PathGeometry(new[] { figure }),
@@ -262,7 +265,6 @@ public partial class OverlayWindow : Window
         };
         OverlayCanvas.Children.Add(glowPath);
 
-        // Sharp layer on top
         var sharpFigure = new PathFigure { StartPoint = outerStart, IsClosed = true, IsFilled = true };
         sharpFigure.Segments.Add(new ArcSegment(outerEnd, new Size(outerRadius, outerRadius), 0, false, SweepDirection.Clockwise, true));
         sharpFigure.Segments.Add(new LineSegment(innerEnd, true));
