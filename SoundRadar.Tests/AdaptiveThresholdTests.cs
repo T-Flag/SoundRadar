@@ -96,6 +96,39 @@ public class AdaptiveThresholdTests
         result.Should().NotBeEmpty();
     }
 
+    [Fact]
+    public void ConstantLevel_BaselineShouldConverge()
+    {
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 2.5);
+        var bands = CreateBands(energy: 0.1);
+
+        // Feed 100 frames of constant signal
+        for (int i = 0; i < 100; i++)
+            threshold.Process(bands, frameDurationSec: 1.0 / 60);
+
+        // Baseline should converge close to the constant level
+        double avg = threshold.GetAverage("Mid");
+        avg.Should().BeApproximately(0.1, 0.02);
+    }
+
+    [Fact]
+    public void TriggerLevel_ShouldEqualBaseline_TimesFactor()
+    {
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 2.5);
+        var bands = CreateBands(energy: 0.1);
+
+        // Stabilize
+        for (int i = 0; i < 300; i++)
+            threshold.Process(bands, frameDurationSec: 1.0 / 60);
+
+        double avg = threshold.GetAverage("Mid");
+        double expectedTrigger = avg * 2.5;
+
+        // Verify trigger level relationship
+        expectedTrigger.Should().BeApproximately(avg * threshold.TriggerFactor, 0.001);
+        avg.Should().BeApproximately(0.1, 0.005);
+    }
+
     private static BandAnalysis[] CreateBands(double energy)
     {
         return new[]

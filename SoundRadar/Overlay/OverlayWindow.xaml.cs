@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
@@ -27,12 +28,6 @@ public partial class OverlayWindow : Window
     private static readonly Color ColorMid = (Color)ColorConverter.ConvertFromString("#44FF44");
     private static readonly Color ColorHighMid = (Color)ColorConverter.ConvertFromString("#4488FF");
 
-    // --- Debug band colors (different scheme for debug text bars) ---
-    private static readonly Color DebugColorSubBass = (Color)ColorConverter.ConvertFromString("#44FF44");
-    private static readonly Color DebugColorLowMid = (Color)ColorConverter.ConvertFromString("#FFFF00");
-    private static readonly Color DebugColorMid = (Color)ColorConverter.ConvertFromString("#FF8C00");
-    private static readonly Color DebugColorHighMid = (Color)ColorConverter.ConvertFromString("#FF4444");
-
     // --- Opacity ---
     private const double MinOpacity = 0.6;
     private const double MaxOpacity = 1.0;
@@ -54,9 +49,7 @@ public partial class OverlayWindow : Window
     private static readonly FontFamily MonoFont = new("Consolas");
     private const double DebugFontSize = 11.5;
     private static readonly SolidColorBrush DebugFg = new(Color.FromArgb(220, 255, 255, 255));
-    private static readonly SolidColorBrush DebugFgDim = new(Color.FromArgb(140, 255, 255, 255));
     private static readonly SolidColorBrush DebugBg = new(Color.FromArgb(128, 0, 0, 0));
-    private static readonly SolidColorBrush DebugHeaderFg = new(Color.FromArgb(255, 0, 212, 255));
 
     // --- Win32 click-through ---
     private const int WS_EX_TRANSPARENT = 0x00000020;
@@ -101,8 +94,6 @@ public partial class OverlayWindow : Window
     private DirectionAnalyzer? _analyzer;
     private AdaptiveThreshold? _adaptiveThreshold;
     private AppConfig? _config;
-    private TextBlock? _statusLabel;
-    private DispatcherTimer? _labelFadeTimer;
     private bool _overlayVisible = true;
     private bool _spectrumVisible = false;
     private bool _debugVisible = true;
@@ -120,6 +111,10 @@ public partial class OverlayWindow : Window
     private int _eventCounter;
     private int _eventsPerSec;
     private DateTime _lastEventCountReset = DateTime.UtcNow;
+
+    // Setting highlight flash
+    private string? _highlightSetting;
+    private DateTime _highlightUntil;
 
     public OverlayWindow()
     {
@@ -187,6 +182,12 @@ public partial class OverlayWindow : Window
         source?.AddHook(WndProc);
     }
 
+    private void FlashSetting(string settingName)
+    {
+        _highlightSetting = settingName;
+        _highlightUntil = DateTime.UtcNow.AddSeconds(1);
+    }
+
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         if (msg == WM_HOTKEY && _analyzer != null)
@@ -201,37 +202,35 @@ public partial class OverlayWindow : Window
                     break;
                 case HOTKEY_SENS_UP:
                     _analyzer.IntensityThreshold /= 1.5f;
-                    ShowStatusLabel($"Seuil : {_analyzer.IntensityThreshold:F3}");
+                    FlashSetting("Sensitivity");
                     SaveConfig();
                     handled = true;
                     break;
                 case HOTKEY_SENS_DOWN:
                     _analyzer.IntensityThreshold *= 1.5f;
-                    ShowStatusLabel($"Seuil : {_analyzer.IntensityThreshold:F3}");
+                    FlashSetting("Sensitivity");
                     SaveConfig();
                     handled = true;
                     break;
                 case HOTKEY_PAN_RANGE_UP:
                     _analyzer.MaxExpectedPan += 0.05f;
-                    ShowStatusLabel($"Pan max : {_analyzer.MaxExpectedPan:F2}");
+                    FlashSetting("MaxExpectedPan");
                     SaveConfig();
                     handled = true;
                     break;
                 case HOTKEY_PAN_RANGE_DOWN:
                     _analyzer.MaxExpectedPan -= 0.05f;
-                    ShowStatusLabel($"Pan max : {_analyzer.MaxExpectedPan:F2}");
+                    FlashSetting("MaxExpectedPan");
                     SaveConfig();
                     handled = true;
                     break;
                 case HOTKEY_SPECTRUM:
                     _spectrumVisible = !_spectrumVisible;
-                    ShowStatusLabel(_spectrumVisible ? "Spectre : ON" : "Spectre : OFF");
                     SaveConfig();
                     handled = true;
                     break;
                 case HOTKEY_DEBUG:
                     _debugVisible = !_debugVisible;
-                    ShowStatusLabel(_debugVisible ? "Debug : ON" : "Debug : OFF");
                     SaveConfig();
                     handled = true;
                     break;
@@ -278,43 +277,11 @@ public partial class OverlayWindow : Window
         _config.Save();
     }
 
-    private void ShowStatusLabel(string text)
-    {
-        if (_statusLabel == null)
-        {
-            _statusLabel = new TextBlock
-            {
-                FontSize = 18,
-                FontFamily = MonoFont,
-                Foreground = new SolidColorBrush(Color.FromArgb(200, 255, 255, 255)),
-                Background = new SolidColorBrush(Color.FromArgb(140, 0, 0, 0)),
-                Padding = new Thickness(10, 5, 10, 5),
-            };
-            Canvas.SetRight(_statusLabel, 20);
-            Canvas.SetBottom(_statusLabel, 20);
-        }
-
-        _statusLabel.Text = text;
-
-        if (!OverlayCanvas.Children.Contains(_statusLabel))
-            OverlayCanvas.Children.Add(_statusLabel);
-
-        _labelFadeTimer?.Stop();
-        _labelFadeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _labelFadeTimer.Tick += (_, _) =>
-        {
-            OverlayCanvas.Children.Remove(_statusLabel);
-            _labelFadeTimer.Stop();
-        };
-        _labelFadeTimer.Start();
-    }
-
     public void PushEvent(SoundEvent soundEvent)
     {
         _events.Enqueue(soundEvent);
         _eventCounter++;
 
-        // Add to event log
         if (soundEvent.DominantBand != null)
         {
             _eventLog.Add(new SoundLogEntry
@@ -331,12 +298,10 @@ public partial class OverlayWindow : Window
 
     private void OnRenderTick(object? sender, EventArgs e)
     {
-        // Performance tracking
         double elapsed = _frameStopwatch.Elapsed.TotalMilliseconds;
         _lastFrameTimeMs = elapsed;
         _frameStopwatch.Restart();
 
-        // Events per second counter
         if ((DateTime.UtcNow - _lastEventCountReset).TotalSeconds >= 1.0)
         {
             _eventsPerSec = _eventCounter;
@@ -344,10 +309,11 @@ public partial class OverlayWindow : Window
             _lastEventCountReset = DateTime.UtcNow;
         }
 
-        bool hasLabel = _statusLabel != null && OverlayCanvas.Children.Contains(_statusLabel);
+        // Clear highlight if expired
+        if (_highlightSetting != null && DateTime.UtcNow > _highlightUntil)
+            _highlightSetting = null;
+
         OverlayCanvas.Children.Clear();
-        if (hasLabel)
-            OverlayCanvas.Children.Add(_statusLabel!);
 
         if (!_overlayVisible) return;
 
@@ -370,7 +336,6 @@ public partial class OverlayWindow : Window
             DrawRadarArc(evt, centerX, centerY, radius);
         }
 
-        // Debug: arc labels and raw pan indicator
         if (_debugVisible)
         {
             foreach (var evt in active)
@@ -379,16 +344,13 @@ public partial class OverlayWindow : Window
                     DrawArcLabel(evt, centerX, centerY, radius);
             }
 
-            // Raw pan indicator (gray line on radar circle)
             if (_debugData != null && Math.Abs(_debugData.RawIntensity) > 0.001f)
                 DrawRawPanIndicator(centerX, centerY, radius);
         }
 
-        // Draw spectrum display if visible
         if (_spectrumVisible && _currentBands != null)
             DrawSpectrumBars(width, height);
 
-        // Debug panels
         if (_debugVisible)
         {
             DrawDebugPanel(width, height, active.Count);
@@ -491,7 +453,6 @@ public partial class OverlayWindow : Window
     {
         if (_debugData == null) return;
 
-        // Draw a thin gray line from center toward the raw pan angle
         float rawPan = _debugData.RawPan;
         double rawAngleDeg = DirectionAnalyzer.PanToAngle(rawPan);
         double rawAngleRad = (rawAngleDeg - 90) * Math.PI / 180;
@@ -519,42 +480,45 @@ public partial class OverlayWindow : Window
         int sampleRate = data?.SampleRate ?? 0;
         int bufferSize = data?.BufferSize ?? 0;
 
-        string rawPanStr = data != null ? FormatSignedFloat(data.RawPan) : "+0.000";
-        string normPanStr = data != null ? FormatSignedFloat(data.NormalizedPan) : "+0.000";
+        string rawPanStr = data != null ? FormatSigned(data.RawPan) : "+0.000";
+        string normPanStr = data != null ? FormatSigned(data.NormalizedPan) : "+0.000";
         string rawIntStr = data != null ? $"{data.RawIntensity:F3}" : "0.000";
-        string maxPanStr = data != null ? $"{data.MaxExpectedPan:F2}" : "0.25";
 
-        // Build frequency bands section
         string bandsSection = BuildBandsSection();
 
-        // Adaptive threshold
-        double baseline = data?.BaselineAvg ?? 0;
-        double triggerLevel = data?.TriggerLevel ?? 0;
         double triggerFactor = data?.TriggerFactor ?? 2.5;
+        double adaptTime = _config?.AdaptiveThreshold.AdaptationTimeSec ?? 3.0;
 
-        string debugText =
-            $"=== SOUND RADAR DEBUG ===\n" +
-            $"Audio Capture: {captureStatus} | {sampleRate} Hz | Buffer: {bufferSize}\n" +
-            $"\n" +
-            $"-- Raw Signal --\n" +
-            $"Pan (raw):        {rawPanStr}\n" +
-            $"Pan (normalized): {normPanStr}\n" +
-            $"Intensity (raw):   {rawIntStr}\n" +
-            $"MaxExpectedPan:    {maxPanStr}\n" +
-            $"\n" +
-            $"-- Frequency Bands --\n" +
-            $"{bandsSection}" +
-            $"\n" +
-            $"-- Adaptive Threshold --\n" +
-            $"Baseline (avg):    {baseline:F4}\n" +
-            $"Trigger level:     {triggerLevel:F4}  (x{triggerFactor:F1})\n" +
-            $"Active events:     {activeEvents}\n" +
-            $"\n" +
-            $"-- Performance --\n" +
-            $"Frame time:        {_lastFrameTimeMs:F1}ms\n" +
-            $"Events/sec:        {_eventsPerSec}";
+        // Settings section with highlight support
+        bool hlSens = _highlightSetting == "Sensitivity";
+        bool hlPan = _highlightSetting == "MaxExpectedPan";
+        string sensVal = _analyzer != null ? $"{_analyzer.IntensityThreshold:F3}" : "0.010";
+        string panVal = _analyzer != null ? $"{_analyzer.MaxExpectedPan:F2}" : "0.25";
 
-        var panel = CreateDebugTextBlock(debugText);
+        var sb = new StringBuilder();
+        sb.AppendLine("=== SOUND RADAR DEBUG ===");
+        sb.AppendLine($"Audio Capture: {captureStatus} | {sampleRate} Hz | Buffer: {bufferSize}");
+        sb.AppendLine();
+        sb.AppendLine("-- Raw Signal --");
+        sb.AppendLine($"Pan (raw):        {rawPanStr}");
+        sb.AppendLine($"Pan (normalized): {normPanStr}");
+        sb.AppendLine($"Intensity (raw):   {rawIntStr}");
+        sb.AppendLine();
+        sb.AppendLine("-- Frequency Bands --");
+        sb.Append(bandsSection);
+        sb.AppendLine();
+        sb.AppendLine("-- Settings --");
+        sb.AppendLine($"{(hlSens ? ">>>" : "   ")} Sensitivity:     {sensVal}  [Ctrl+Shift+Up/Down]");
+        sb.AppendLine($"{(hlPan ? ">>>" : "   ")} MaxExpectedPan:  {panVal}  [Ctrl+Shift+Left/Right]");
+        sb.AppendLine($"    Trigger factor:  {triggerFactor:F1}");
+        sb.AppendLine($"    Adaptation time: {adaptTime:F1}s");
+        sb.AppendLine();
+        sb.AppendLine("-- Performance --");
+        sb.AppendLine($"Frame time:        {_lastFrameTimeMs:F1}ms");
+        sb.AppendLine($"Active events:     {activeEvents}");
+        sb.Append($"Events/sec:        {_eventsPerSec}");
+
+        var panel = CreateDebugTextBlock(sb.ToString());
         Canvas.SetLeft(panel, 15);
         Canvas.SetTop(panel, 15);
         OverlayCanvas.Children.Add(panel);
@@ -568,7 +532,7 @@ public partial class OverlayWindow : Window
 
         string[] names = { "SubBass", "LowMid", "Mid", "HighMid" };
         string[] ranges = { "[20-80Hz]", "[80-400Hz]", "[400-1800Hz]", "[1800-6000Hz]" };
-        var sb = new System.Text.StringBuilder();
+        var sb = new StringBuilder();
 
         for (int i = 0; i < bands.Length && i < 4; i++)
         {
@@ -577,8 +541,13 @@ public partial class OverlayWindow : Window
             int filled = (int)(normalized * 10);
             int empty = 10 - filled;
             string bar = new string('\u2588', filled) + new string('\u2591', empty);
-            string panStr = FormatSignedFloat(bands[i].Pan, 2);
-            sb.AppendLine($"{names[i],-8} {ranges[i],-14} : {bar}  {normalized:F2}  pan: {panStr}");
+            string panStr = FormatSigned(bands[i].Pan, 2);
+
+            // Per-band baseline and trigger from AdaptiveThreshold
+            double bandBase = _adaptiveThreshold?.GetAverage(names[i]) ?? 0;
+            double bandTrig = bandBase * (_adaptiveThreshold?.TriggerFactor ?? 2.5);
+
+            sb.AppendLine($"{names[i],-8} {ranges[i],-14}: {bar}  {normalized:F2}  pan:{panStr}  base:{bandBase:F4}  trig:{bandTrig:F4}");
         }
         return sb.ToString();
     }
@@ -606,10 +575,9 @@ public partial class OverlayWindow : Window
     {
         if (_eventLog.Count == 0) return;
 
-        var sb = new System.Text.StringBuilder();
+        var sb = new StringBuilder();
         sb.AppendLine("=== EVENT LOG ===");
 
-        // Show most recent first
         for (int i = _eventLog.Count - 1; i >= 0; i--)
             sb.AppendLine(_eventLog[i].ToString());
 
@@ -630,17 +598,15 @@ public partial class OverlayWindow : Window
             Padding = new Thickness(10, 8, 10, 8),
         };
 
-        var border = new Border
+        return new Border
         {
             Background = DebugBg,
             CornerRadius = new CornerRadius(4),
             Child = tb,
         };
-
-        return border;
     }
 
-    private static string FormatSignedFloat(float value, int decimals = 3)
+    private static string FormatSigned(float value, int decimals = 3)
     {
         string format = decimals == 2 ? "F2" : "F3";
         return value >= 0 ? $"+{value.ToString(format)}" : value.ToString(format);
@@ -658,7 +624,6 @@ public partial class OverlayWindow : Window
         double startX = width - totalWidth - 30;
         double baseY = height - 120;
 
-        // Offset up if event log is visible in debug mode
         if (_debugVisible && _eventLog.Count > 0)
             baseY -= 140;
 

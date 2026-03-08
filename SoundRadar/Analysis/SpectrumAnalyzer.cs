@@ -4,6 +4,8 @@ public class SpectrumAnalyzer
 {
     private readonly int _fftSize;
     private readonly double[] _window;
+    private readonly float[] _accumBuffer;
+    private int _accumCount;
 
     public int FftSize => _fftSize;
 
@@ -11,11 +13,44 @@ public class SpectrumAnalyzer
     {
         _fftSize = fftSize;
         _window = CreateHanningWindow(fftSize);
+        _accumBuffer = new float[fftSize * 2]; // interleaved stereo
+    }
+
+    /// <summary>
+    /// Accumulates interleaved stereo samples. Returns analysis results when enough
+    /// frames have been collected (>= FftSize), or null if more data is needed.
+    /// </summary>
+    public (double[] Left, double[] Right)? AccumulateAndAnalyze(float[] interleavedSamples, int sampleRate)
+    {
+        int incomingFrames = interleavedSamples.Length / 2;
+        int spaceLeft = _fftSize - _accumCount;
+
+        int toCopy = Math.Min(incomingFrames, spaceLeft);
+        Array.Copy(interleavedSamples, 0, _accumBuffer, _accumCount * 2, toCopy * 2);
+        _accumCount += toCopy;
+
+        if (_accumCount < _fftSize)
+            return null;
+
+        // We have enough — analyze and reset
+        var result = Analyze(_accumBuffer, sampleRate);
+        _accumCount = 0;
+
+        // If there are leftover samples, start accumulating them
+        int leftover = incomingFrames - toCopy;
+        if (leftover > 0)
+        {
+            int leftoverToCopy = Math.Min(leftover, _fftSize);
+            Array.Copy(interleavedSamples, toCopy * 2, _accumBuffer, 0, leftoverToCopy * 2);
+            _accumCount = leftoverToCopy;
+        }
+
+        return result;
     }
 
     /// <summary>
     /// Analyzes interleaved stereo buffer [L,R,L,R,...] and returns magnitude spectra for each channel.
-    /// Returns (leftMagnitudes, rightMagnitudes) each of length FftSize/2.
+    /// Buffer must contain at least FftSize frames.
     /// </summary>
     public (double[] Left, double[] Right) Analyze(float[] interleavedSamples, int sampleRate)
     {

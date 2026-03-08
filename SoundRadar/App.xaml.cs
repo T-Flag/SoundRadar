@@ -48,26 +48,12 @@ public partial class App : Application
             // Legacy direction analysis
             analyzer.ProcessBuffer(samples, sampleRate);
 
-            // Update debug data
-            var debugData = new DebugData
-            {
-                SampleRate = sampleRate,
-                BufferSize = samples.Length / 2,
-                CaptureActive = true,
-                RawPan = analyzer.LastRawPan,
-                NormalizedPan = analyzer.LastNormalizedPan,
-                RawIntensity = analyzer.LastRawIntensity,
-                MaxExpectedPan = analyzer.MaxExpectedPan,
-                BaselineAvg = adaptiveThreshold.GetAverage("Mid"),
-                TriggerLevel = adaptiveThreshold.GetAverage("Mid") * adaptiveThreshold.TriggerFactor,
-                TriggerFactor = adaptiveThreshold.TriggerFactor,
-            };
-            overlay.Dispatcher.Invoke(() => overlay.UpdateDebugData(debugData));
+            // FFT pipeline with sample accumulation
+            var fftResult = spectrumAnalyzer.AccumulateAndAnalyze(samples, sampleRate);
 
-            // New FFT pipeline
-            if (samples.Length / 2 >= spectrumAnalyzer.FftSize)
+            if (fftResult.HasValue)
             {
-                var (leftMag, rightMag) = spectrumAnalyzer.Analyze(samples, sampleRate);
+                var (leftMag, rightMag) = fftResult.Value;
                 var bands = bandFilter.Analyze(leftMag, rightMag, sampleRate, spectrumAnalyzer.FftSize);
 
                 // Update spectrum display
@@ -95,6 +81,22 @@ public partial class App : Application
                     overlay.Dispatcher.Invoke(() => overlay.PushEvent(evt));
                 }
             }
+
+            // Update debug data (after FFT pipeline so baseline is current)
+            var debugData = new DebugData
+            {
+                SampleRate = sampleRate,
+                BufferSize = samples.Length / 2,
+                CaptureActive = true,
+                RawPan = analyzer.LastRawPan,
+                NormalizedPan = analyzer.LastNormalizedPan,
+                RawIntensity = analyzer.LastRawIntensity,
+                MaxExpectedPan = analyzer.MaxExpectedPan,
+                BaselineAvg = adaptiveThreshold.GetAverage("Mid"),
+                TriggerLevel = adaptiveThreshold.GetAverage("Mid") * adaptiveThreshold.TriggerFactor,
+                TriggerFactor = adaptiveThreshold.TriggerFactor,
+            };
+            overlay.Dispatcher.Invoke(() => overlay.UpdateDebugData(debugData));
         };
 
         overlay.Show();
