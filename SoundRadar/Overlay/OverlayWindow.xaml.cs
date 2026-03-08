@@ -537,8 +537,8 @@ public partial class OverlayWindow : Window
         string bandsSection = BuildBandsSection();
 
         double triggerFactor = data?.TriggerFactor ?? 1.5;
-        double adaptTime = _adaptiveThreshold?.AdaptationTimeSec ?? 1.5;
-        double noiseFloor = _bandFilter?.NoiseFloorDb ?? -40;
+        double adaptTime = _adaptiveThreshold?.AdaptationTimeSec ?? 0.5;
+        double noiseFloor = _bandFilter?.NoiseFloorDb ?? -60;
 
         // Settings section with highlight support
         bool hlSens = _highlightSetting == "Sensitivity";
