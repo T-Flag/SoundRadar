@@ -20,12 +20,17 @@ public partial class OverlayWindow : Window
     private static readonly Color ColorCenter = Colors.White;
     private const float CenterPanThreshold = 0.1f;
 
+    // --- Opacity ---
+    private const double MinOpacity = 0.6;  // minimum opacity for a visible arc
+    private const double MaxOpacity = 1.0;
+    private const double CenterOpacityMultiplier = 0.6; // reduced for center sounds
+
     // --- Radar geometry ---
     private const double RadiusFraction = 0.4;
     private const double ArcSpanDegrees = 30.0;
     private const double ArcMaxThickness = 0.20;
     private const double ArcMinThickness = 0.04;
-    private const double GlowRadius = 12.0;
+    private const double GlowRadius = 18.0;  // boosted from 12
 
     // --- Win32 click-through ---
     private const int WS_EX_TRANSPARENT = 0x00000020;
@@ -37,10 +42,14 @@ public partial class OverlayWindow : Window
     private const int HOTKEY_SENS_UP = 2;
     private const int HOTKEY_SENS_DOWN = 3;
     private const int HOTKEY_QUIT = 4;
+    private const int HOTKEY_PAN_RANGE_UP = 5;
+    private const int HOTKEY_PAN_RANGE_DOWN = 6;
     private const uint MOD_CTRL_SHIFT = 0x0002 | 0x0004; // MOD_CONTROL | MOD_SHIFT
     private const uint VK_O = 0x4F;
     private const uint VK_UP = 0x26;
     private const uint VK_DOWN = 0x28;
+    private const uint VK_LEFT = 0x25;
+    private const uint VK_RIGHT = 0x27;
     private const uint VK_Q = 0x51;
 
     [DllImport("user32.dll")]
@@ -60,7 +69,7 @@ public partial class OverlayWindow : Window
     private readonly ConcurrentQueue<SoundEvent> _events = new();
     private readonly DispatcherTimer _renderTimer;
     private DirectionAnalyzer? _analyzer;
-    private TextBlock? _thresholdLabel;
+    private TextBlock? _statusLabel;
     private DispatcherTimer? _labelFadeTimer;
     private bool _overlayVisible = true;
     private IntPtr _hwnd;
@@ -87,24 +96,23 @@ public partial class OverlayWindow : Window
     {
         _hwnd = new WindowInteropHelper(this).Handle;
 
-        // Click-through
         int extStyle = GetWindowLong(_hwnd, GWL_EXSTYLE);
         SetWindowLong(_hwnd, GWL_EXSTYLE, extStyle | WS_EX_TRANSPARENT);
 
-        // Register global hotkeys
         RegisterHotKey(_hwnd, HOTKEY_TOGGLE, MOD_CTRL_SHIFT, VK_O);
         RegisterHotKey(_hwnd, HOTKEY_SENS_UP, MOD_CTRL_SHIFT, VK_UP);
         RegisterHotKey(_hwnd, HOTKEY_SENS_DOWN, MOD_CTRL_SHIFT, VK_DOWN);
         RegisterHotKey(_hwnd, HOTKEY_QUIT, MOD_CTRL_SHIFT, VK_Q);
+        RegisterHotKey(_hwnd, HOTKEY_PAN_RANGE_UP, MOD_CTRL_SHIFT, VK_RIGHT);
+        RegisterHotKey(_hwnd, HOTKEY_PAN_RANGE_DOWN, MOD_CTRL_SHIFT, VK_LEFT);
 
-        // Listen for WM_HOTKEY messages
         var source = HwndSource.FromHwnd(_hwnd);
         source?.AddHook(WndProc);
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (msg == WM_HOTKEY)
+        if (msg == WM_HOTKEY && _analyzer != null)
         {
             int id = wParam.ToInt32();
             switch (id)
@@ -113,14 +121,24 @@ public partial class OverlayWindow : Window
                     ToggleOverlay();
                     handled = true;
                     break;
-                case HOTKEY_SENS_UP when _analyzer != null:
-                    _analyzer.IntensityThreshold /= 1.5f; // lower threshold = more sensitive
-                    ShowThresholdLabel();
+                case HOTKEY_SENS_UP:
+                    _analyzer.IntensityThreshold /= 1.5f;
+                    ShowStatusLabel($"Seuil : {_analyzer.IntensityThreshold:F3}");
                     handled = true;
                     break;
-                case HOTKEY_SENS_DOWN when _analyzer != null:
-                    _analyzer.IntensityThreshold *= 1.5f; // higher threshold = less sensitive
-                    ShowThresholdLabel();
+                case HOTKEY_SENS_DOWN:
+                    _analyzer.IntensityThreshold *= 1.5f;
+                    ShowStatusLabel($"Seuil : {_analyzer.IntensityThreshold:F3}");
+                    handled = true;
+                    break;
+                case HOTKEY_PAN_RANGE_UP:
+                    _analyzer.MaxExpectedPan += 0.05f;
+                    ShowStatusLabel($"Pan max : {_analyzer.MaxExpectedPan:F2}");
+                    handled = true;
+                    break;
+                case HOTKEY_PAN_RANGE_DOWN:
+                    _analyzer.MaxExpectedPan -= 0.05f;
+                    ShowStatusLabel($"Pan max : {_analyzer.MaxExpectedPan:F2}");
                     handled = true;
                     break;
                 case HOTKEY_QUIT:
@@ -140,6 +158,8 @@ public partial class OverlayWindow : Window
             UnregisterHotKey(_hwnd, HOTKEY_SENS_UP);
             UnregisterHotKey(_hwnd, HOTKEY_SENS_DOWN);
             UnregisterHotKey(_hwnd, HOTKEY_QUIT);
+            UnregisterHotKey(_hwnd, HOTKEY_PAN_RANGE_UP);
+            UnregisterHotKey(_hwnd, HOTKEY_PAN_RANGE_DOWN);
         }
         base.OnClosed(e);
     }
@@ -150,13 +170,11 @@ public partial class OverlayWindow : Window
         OverlayCanvas.Visibility = _overlayVisible ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void ShowThresholdLabel()
+    private void ShowStatusLabel(string text)
     {
-        if (_analyzer == null) return;
-
-        if (_thresholdLabel == null)
+        if (_statusLabel == null)
         {
-            _thresholdLabel = new TextBlock
+            _statusLabel = new TextBlock
             {
                 FontSize = 18,
                 FontFamily = new FontFamily("Consolas"),
@@ -164,20 +182,20 @@ public partial class OverlayWindow : Window
                 Background = new SolidColorBrush(Color.FromArgb(140, 0, 0, 0)),
                 Padding = new Thickness(10, 5, 10, 5),
             };
-            Canvas.SetRight(_thresholdLabel, 20);
-            Canvas.SetBottom(_thresholdLabel, 20);
+            Canvas.SetRight(_statusLabel, 20);
+            Canvas.SetBottom(_statusLabel, 20);
         }
 
-        _thresholdLabel.Text = $"Seuil : {_analyzer.IntensityThreshold:F3}";
+        _statusLabel.Text = text;
 
-        if (!OverlayCanvas.Children.Contains(_thresholdLabel))
-            OverlayCanvas.Children.Add(_thresholdLabel);
+        if (!OverlayCanvas.Children.Contains(_statusLabel))
+            OverlayCanvas.Children.Add(_statusLabel);
 
         _labelFadeTimer?.Stop();
         _labelFadeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _labelFadeTimer.Tick += (_, _) =>
         {
-            OverlayCanvas.Children.Remove(_thresholdLabel);
+            OverlayCanvas.Children.Remove(_statusLabel);
             _labelFadeTimer.Stop();
         };
         _labelFadeTimer.Start();
@@ -190,10 +208,10 @@ public partial class OverlayWindow : Window
 
     private void OnRenderTick(object? sender, EventArgs e)
     {
-        bool hasLabel = _thresholdLabel != null && OverlayCanvas.Children.Contains(_thresholdLabel);
+        bool hasLabel = _statusLabel != null && OverlayCanvas.Children.Contains(_statusLabel);
         OverlayCanvas.Children.Clear();
         if (hasLabel)
-            OverlayCanvas.Children.Add(_thresholdLabel!);
+            OverlayCanvas.Children.Add(_statusLabel!);
 
         if (!_overlayVisible) return;
 
@@ -226,8 +244,11 @@ public partial class OverlayWindow : Window
         bool isRight = evt.Pan > CenterPanThreshold;
         Color baseColor = isLeft ? ColorLeft : isRight ? ColorRight : ColorCenter;
 
-        byte opacity = (byte)(255 * Math.Min(1f, evt.Intensity * 2f) * decay);
-        if (!isLeft && !isRight) opacity = (byte)(opacity * 0.5);
+        // Opacity: lerp between MinOpacity and MaxOpacity based on intensity, then apply decay
+        double rawOpacity = MinOpacity + (MaxOpacity - MinOpacity) * Math.Min(1.0, evt.Intensity * 2.0);
+        rawOpacity *= decay;
+        if (!isLeft && !isRight) rawOpacity *= CenterOpacityMultiplier;
+        byte opacity = (byte)(255 * Math.Clamp(rawOpacity, 0, 1));
 
         double thicknessFrac = ArcMinThickness + (ArcMaxThickness - ArcMinThickness) * evt.Intensity * decay;
         double outerRadius = radius;
@@ -253,6 +274,7 @@ public partial class OverlayWindow : Window
 
         var color = Color.FromArgb(opacity, baseColor.R, baseColor.G, baseColor.B);
 
+        // Glow layer
         var glowPath = new Path
         {
             Data = new PathGeometry(new[] { figure }),
@@ -265,12 +287,13 @@ public partial class OverlayWindow : Window
         };
         OverlayCanvas.Children.Add(glowPath);
 
+        // Sharp layer on top
         var sharpFigure = new PathFigure { StartPoint = outerStart, IsClosed = true, IsFilled = true };
         sharpFigure.Segments.Add(new ArcSegment(outerEnd, new Size(outerRadius, outerRadius), 0, false, SweepDirection.Clockwise, true));
         sharpFigure.Segments.Add(new LineSegment(innerEnd, true));
         sharpFigure.Segments.Add(new ArcSegment(innerStart, new Size(innerRadius, innerRadius), 0, false, SweepDirection.Counterclockwise, true));
 
-        var sharpColor = Color.FromArgb((byte)(opacity * 0.8), baseColor.R, baseColor.G, baseColor.B);
+        var sharpColor = Color.FromArgb((byte)(opacity * 0.85), baseColor.R, baseColor.G, baseColor.B);
         var sharpPath = new Path
         {
             Data = new PathGeometry(new[] { sharpFigure }),
