@@ -5,6 +5,7 @@ public class SoundEvent
     public float Pan { get; init; }
     public float Intensity { get; init; }
     public float DominantFrequency { get; init; }
+    public string? DominantBand { get; init; }
     public DateTime Timestamp { get; init; } = DateTime.UtcNow;
     public TimeSpan DisplayDuration { get; init; } = TimeSpan.FromMilliseconds(500);
 

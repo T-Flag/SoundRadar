@@ -20,17 +20,28 @@ public partial class OverlayWindow : Window
     private static readonly Color ColorCenter = Colors.White;
     private const float CenterPanThreshold = 0.1f;
 
+    // --- Spectrum band colors ---
+    private static readonly Color ColorSubBass = (Color)ColorConverter.ConvertFromString("#FF4444");
+    private static readonly Color ColorLowMid = (Color)ColorConverter.ConvertFromString("#FFAA00");
+    private static readonly Color ColorMid = (Color)ColorConverter.ConvertFromString("#44FF44");
+    private static readonly Color ColorHighMid = (Color)ColorConverter.ConvertFromString("#4488FF");
+
     // --- Opacity ---
-    private const double MinOpacity = 0.6;  // minimum opacity for a visible arc
+    private const double MinOpacity = 0.6;
     private const double MaxOpacity = 1.0;
-    private const double CenterOpacityMultiplier = 0.6; // reduced for center sounds
+    private const double CenterOpacityMultiplier = 0.6;
 
     // --- Radar geometry ---
     private const double RadiusFraction = 0.4;
     private const double ArcSpanDegrees = 30.0;
     private const double ArcMaxThickness = 0.20;
     private const double ArcMinThickness = 0.04;
-    private const double GlowRadius = 18.0;  // boosted from 12
+    private const double GlowRadius = 18.0;
+
+    // --- Spectrum display ---
+    private const double SpectrumBarWidth = 20;
+    private const double SpectrumBarMaxHeight = 80;
+    private const double SpectrumMargin = 10;
 
     // --- Win32 click-through ---
     private const int WS_EX_TRANSPARENT = 0x00000020;
@@ -44,13 +55,15 @@ public partial class OverlayWindow : Window
     private const int HOTKEY_QUIT = 4;
     private const int HOTKEY_PAN_RANGE_UP = 5;
     private const int HOTKEY_PAN_RANGE_DOWN = 6;
-    private const uint MOD_CTRL_SHIFT = 0x0002 | 0x0004; // MOD_CONTROL | MOD_SHIFT
+    private const int HOTKEY_SPECTRUM = 7;
+    private const uint MOD_CTRL_SHIFT = 0x0002 | 0x0004;
     private const uint VK_O = 0x4F;
     private const uint VK_UP = 0x26;
     private const uint VK_DOWN = 0x28;
     private const uint VK_LEFT = 0x25;
     private const uint VK_RIGHT = 0x27;
     private const uint VK_Q = 0x51;
+    private const uint VK_S = 0x53;
 
     [DllImport("user32.dll")]
     private static extern int GetWindowLong(IntPtr hwnd, int index);
@@ -73,7 +86,9 @@ public partial class OverlayWindow : Window
     private TextBlock? _statusLabel;
     private DispatcherTimer? _labelFadeTimer;
     private bool _overlayVisible = true;
+    private bool _spectrumVisible = false;
     private IntPtr _hwnd;
+    private BandAnalysis[]? _currentBands;
 
     public OverlayWindow()
     {
@@ -82,7 +97,7 @@ public partial class OverlayWindow : Window
 
         _renderTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromMilliseconds(16) // ~60 FPS
+            Interval = TimeSpan.FromMilliseconds(16)
         };
         _renderTimer.Tick += OnRenderTick;
         _renderTimer.Start();
@@ -96,12 +111,18 @@ public partial class OverlayWindow : Window
     public void SetConfig(AppConfig config)
     {
         _config = config;
+        _spectrumVisible = config.SpectrumDisplayVisible;
     }
 
     public void SetOverlayVisible(bool visible)
     {
         _overlayVisible = visible;
         OverlayCanvas.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    public void UpdateSpectrum(BandAnalysis[] bands)
+    {
+        _currentBands = bands;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -117,6 +138,7 @@ public partial class OverlayWindow : Window
         RegisterHotKey(_hwnd, HOTKEY_QUIT, MOD_CTRL_SHIFT, VK_Q);
         RegisterHotKey(_hwnd, HOTKEY_PAN_RANGE_UP, MOD_CTRL_SHIFT, VK_RIGHT);
         RegisterHotKey(_hwnd, HOTKEY_PAN_RANGE_DOWN, MOD_CTRL_SHIFT, VK_LEFT);
+        RegisterHotKey(_hwnd, HOTKEY_SPECTRUM, MOD_CTRL_SHIFT, VK_S);
 
         var source = HwndSource.FromHwnd(_hwnd);
         source?.AddHook(WndProc);
@@ -158,6 +180,12 @@ public partial class OverlayWindow : Window
                     SaveConfig();
                     handled = true;
                     break;
+                case HOTKEY_SPECTRUM:
+                    _spectrumVisible = !_spectrumVisible;
+                    ShowStatusLabel(_spectrumVisible ? "Spectre : ON" : "Spectre : OFF");
+                    SaveConfig();
+                    handled = true;
+                    break;
                 case HOTKEY_QUIT:
                     SaveConfig();
                     Application.Current.Shutdown();
@@ -178,6 +206,7 @@ public partial class OverlayWindow : Window
             UnregisterHotKey(_hwnd, HOTKEY_QUIT);
             UnregisterHotKey(_hwnd, HOTKEY_PAN_RANGE_UP);
             UnregisterHotKey(_hwnd, HOTKEY_PAN_RANGE_DOWN);
+            UnregisterHotKey(_hwnd, HOTKEY_SPECTRUM);
         }
         base.OnClosed(e);
     }
@@ -194,6 +223,7 @@ public partial class OverlayWindow : Window
         _config.IntensityThreshold = _analyzer.IntensityThreshold;
         _config.MaxExpectedPan = _analyzer.MaxExpectedPan;
         _config.OverlayVisible = _overlayVisible;
+        _config.SpectrumDisplayVisible = _spectrumVisible;
         _config.Save();
     }
 
@@ -260,6 +290,10 @@ public partial class OverlayWindow : Window
             _events.Enqueue(evt);
             DrawRadarArc(evt, centerX, centerY, radius);
         }
+
+        // Draw spectrum display if visible
+        if (_spectrumVisible && _currentBands != null)
+            DrawSpectrumBars(width, height);
     }
 
     private void DrawRadarArc(SoundEvent evt, double cx, double cy, double radius)
@@ -271,7 +305,6 @@ public partial class OverlayWindow : Window
         bool isRight = evt.Pan > CenterPanThreshold;
         Color baseColor = isLeft ? ColorLeft : isRight ? ColorRight : ColorCenter;
 
-        // Opacity: lerp between MinOpacity and MaxOpacity based on intensity, then apply decay
         double rawOpacity = MinOpacity + (MaxOpacity - MinOpacity) * Math.Min(1.0, evt.Intensity * 2.0);
         rawOpacity *= decay;
         if (!isLeft && !isRight) rawOpacity *= CenterOpacityMultiplier;
@@ -301,7 +334,6 @@ public partial class OverlayWindow : Window
 
         var color = Color.FromArgb(opacity, baseColor.R, baseColor.G, baseColor.B);
 
-        // Glow layer
         var glowPath = new Path
         {
             Data = new PathGeometry(new[] { figure }),
@@ -314,7 +346,6 @@ public partial class OverlayWindow : Window
         };
         OverlayCanvas.Children.Add(glowPath);
 
-        // Sharp layer on top
         var sharpFigure = new PathFigure { StartPoint = outerStart, IsClosed = true, IsFilled = true };
         sharpFigure.Segments.Add(new ArcSegment(outerEnd, new Size(outerRadius, outerRadius), 0, false, SweepDirection.Clockwise, true));
         sharpFigure.Segments.Add(new LineSegment(innerEnd, true));
@@ -327,5 +358,66 @@ public partial class OverlayWindow : Window
             Fill = new SolidColorBrush(sharpColor),
         };
         OverlayCanvas.Children.Add(sharpPath);
+    }
+
+    private void DrawSpectrumBars(double width, double height)
+    {
+        var bands = _currentBands;
+        if (bands == null || bands.Length == 0) return;
+
+        Color[] bandColors = { ColorSubBass, ColorLowMid, ColorMid, ColorHighMid };
+        string[] bandLabels = { "SB", "LM", "M", "HM" };
+
+        double totalWidth = bands.Length * (SpectrumBarWidth + SpectrumMargin) - SpectrumMargin;
+        double startX = width - totalWidth - 30;
+        double baseY = height - 120;
+
+        // Background panel
+        var bg = new System.Windows.Shapes.Rectangle
+        {
+            Width = totalWidth + 20,
+            Height = SpectrumBarMaxHeight + 30,
+            Fill = new SolidColorBrush(Color.FromArgb(120, 0, 0, 0)),
+            RadiusX = 5,
+            RadiusY = 5,
+        };
+        Canvas.SetLeft(bg, startX - 10);
+        Canvas.SetTop(bg, baseY - SpectrumBarMaxHeight - 10);
+        OverlayCanvas.Children.Add(bg);
+
+        for (int i = 0; i < bands.Length && i < 4; i++)
+        {
+            double energy = Math.Sqrt(bands[i].Energy);
+            double barHeight = Math.Min(energy * SpectrumBarMaxHeight * 5, SpectrumBarMaxHeight);
+            double x = startX + i * (SpectrumBarWidth + SpectrumMargin);
+
+            var barColor = i < bandColors.Length ? bandColors[i] : Colors.White;
+
+            var bar = new System.Windows.Shapes.Rectangle
+            {
+                Width = SpectrumBarWidth,
+                Height = barHeight,
+                Fill = new SolidColorBrush(Color.FromArgb(200, barColor.R, barColor.G, barColor.B)),
+                RadiusX = 2,
+                RadiusY = 2,
+            };
+            Canvas.SetLeft(bar, x);
+            Canvas.SetTop(bar, baseY - barHeight);
+            OverlayCanvas.Children.Add(bar);
+
+            // Band label
+            var label = new TextBlock
+            {
+                Text = i < bandLabels.Length ? bandLabels[i] : "?",
+                FontSize = 10,
+                FontFamily = new FontFamily("Consolas"),
+                Foreground = new SolidColorBrush(Color.FromArgb(180, 255, 255, 255)),
+                TextAlignment = TextAlignment.Center,
+                Width = SpectrumBarWidth,
+            };
+            Canvas.SetLeft(label, x);
+            Canvas.SetTop(label, baseY + 2);
+            OverlayCanvas.Children.Add(label);
+        }
     }
 }
