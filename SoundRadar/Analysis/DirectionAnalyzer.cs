@@ -4,13 +4,31 @@ namespace SoundRadar.Analysis;
 
 public class DirectionAnalyzer
 {
-    private readonly float _intensityThreshold;
+    private float _intensityThreshold;
 
     public event Action<SoundEvent>? SoundDetected;
 
-    public DirectionAnalyzer(float intensityThreshold = 0.05f)
+    public float IntensityThreshold
+    {
+        get => _intensityThreshold;
+        set => _intensityThreshold = Math.Clamp(value, 0.001f, 1f);
+    }
+
+    public DirectionAnalyzer(float intensityThreshold = 0.01f)
     {
         _intensityThreshold = intensityThreshold;
+    }
+
+    /// <summary>
+    /// Maps pan value (-1..+1) to angle in degrees (-90..+90).
+    /// Uses an exponential curve to accentuate extreme values.
+    /// </summary>
+    public static float PanToAngle(float pan)
+    {
+        float sign = Math.Sign(pan);
+        float abs = Math.Abs(pan);
+        float curved = (float)Math.Pow(abs, 0.7);
+        return sign * curved * 90f;
     }
 
     public void ProcessBuffer(float[] samples, int sampleRate)

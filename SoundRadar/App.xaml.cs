@@ -15,6 +15,8 @@ public partial class App : Application
         var analyzer = new DirectionAnalyzer();
         _audioCaptureService = new AudioCaptureService();
 
+        overlay.SetAnalyzer(analyzer);
+
         analyzer.SoundDetected += evt =>
         {
             overlay.Dispatcher.Invoke(() => overlay.PushEvent(evt));
