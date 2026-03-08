@@ -8,6 +8,10 @@ public class AdaptiveThreshold
     private double _adaptationTimeSec;
     private readonly double _triggerFactor;
     private readonly ConcurrentDictionary<string, double> _averages = new();
+    private readonly ConcurrentDictionary<string, int> _consecutiveSpikes = new();
+
+    // After this many consecutive spike frames, treat as new ambient level
+    private const int CatchUpThreshold = 20; // ~0.33s at 60fps
 
     public int ProcessCallCount { get; private set; }
 
@@ -31,6 +35,7 @@ public class AdaptiveThreshold
 
     /// <summary>
     /// Processes band analysis results and returns bands that exceed their adaptive threshold.
+    /// Uses dual-speed EMA with catch-up detection for sustained ambient changes.
     /// </summary>
     public List<BandAnalysis> Process(BandAnalysis[] bands, double frameDurationSec)
     {
@@ -53,12 +58,23 @@ public class AdaptiveThreshold
 
             if (isSpike)
             {
-                triggered.Add(band);
-                // Slow update during spike — baseline rises slightly
-                _averages[band.Name] = avg + alphaSlow * (energy - avg);
+                int consecutive = _consecutiveSpikes.AddOrUpdate(band.Name, 1, (_, c) => c + 1);
+
+                if (consecutive >= CatchUpThreshold)
+                {
+                    // Sustained "spike" = new ambient level, use fast alpha to catch up
+                    _averages[band.Name] = avg + alphaFast * (energy - avg);
+                }
+                else
+                {
+                    triggered.Add(band);
+                    // Slow update during spike — baseline rises slightly
+                    _averages[band.Name] = avg + alphaSlow * (energy - avg);
+                }
             }
             else
             {
+                _consecutiveSpikes[band.Name] = 0;
                 // Fast update for ambient noise tracking
                 _averages[band.Name] = avg + alphaFast * (energy - avg);
             }

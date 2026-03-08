@@ -216,6 +216,65 @@ public class AdaptiveThresholdTests
         avgAfterSilence.Should().BeLessThan(0.05);
     }
 
+    [Fact]
+    public void CatchUp_LowBaselineHighEnergy_ShouldConvergeFast()
+    {
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
+
+        // Initialize baseline at 0.01
+        var lowBands = CreateBands(energy: 0.01);
+        threshold.Process(lowBands, frameDurationSec: 1.0 / 60);
+
+        // Feed constant 0.50 for 2 seconds (120 frames at 60fps)
+        var highBands = CreateBands(energy: 0.50);
+        for (int i = 0; i < 120; i++)
+            threshold.Process(highBands, frameDurationSec: 1.0 / 60);
+
+        // Baseline must reach 0.40 within 2 seconds (catch-up mode)
+        double avg = threshold.GetAverage("Mid");
+        avg.Should().BeGreaterThanOrEqualTo(0.40);
+    }
+
+    [Fact]
+    public void CatchUp_SmallGap_ShouldNotActivate()
+    {
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
+        var normalBands = CreateBands(energy: 0.30);
+
+        // Stabilize baseline at 0.30
+        for (int i = 0; i < 300; i++)
+            threshold.Process(normalBands, frameDurationSec: 1.0 / 60);
+
+        // Spike at 2x (0.60) — gap is only 2×, NOT 3× → normal spike, should trigger
+        var spikeBands = CreateBands(energy: 0.60);
+        var result = threshold.Process(spikeBands, frameDurationSec: 1.0 / 60);
+
+        result.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void CatchUp_NormalAmbient_ShouldUseNormalAlpha()
+    {
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
+        var normalBands = CreateBands(energy: 0.30);
+
+        // Stabilize baseline at 0.30
+        for (int i = 0; i < 300; i++)
+            threshold.Process(normalBands, frameDurationSec: 1.0 / 60);
+
+        double avgBefore = threshold.GetAverage("Mid");
+
+        // Constant energy at 0.35 — below trigger, below 5× → normal fast alpha
+        var slightIncrease = CreateBands(energy: 0.35);
+        threshold.Process(slightIncrease, frameDurationSec: 1.0 / 60);
+
+        double avgAfter = threshold.GetAverage("Mid");
+
+        // Should move toward 0.35, but not jump wildly
+        avgAfter.Should().BeGreaterThan(avgBefore);
+        avgAfter.Should().BeLessThan(0.35);
+    }
+
     private static BandAnalysis[] CreateBands(double energy)
     {
         return new[]
