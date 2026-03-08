@@ -22,18 +22,18 @@ SoundRadar.sln
 │   │   ├── DirectionAnalyzer.cs   # Analyse stéréo L/R → pan (-1 à +1)
 │   │   ├── SpectrumAnalyzer.cs    # FFT temps réel (Hanning window, FftSharp)
 │   │   ├── FrequencyBandFilter.cs # Découpage en 4 bandes fréquentielles
-│   │   └── AdaptiveThreshold.cs   # Seuil adaptatif EMA par bande
+│   │   └── AdaptiveThreshold.cs   # Seuil adaptatif EMA dual-speed + catch-up
 │   ├── Audio/AudioCaptureService.cs   # Capture WASAPI loopback via NAudio
 │   ├── Overlay/OverlayWindow.xaml(.cs) # Fenêtre transparente click-through + spectre
 │   └── App.xaml(.cs)              # Point d'entrée, câblage pipeline
-├── SoundRadar.Tests/              # Tests unitaires xUnit (33 tests)
+├── SoundRadar.Tests/              # Tests unitaires xUnit (47 tests)
 │   ├── SoundEventTests.cs         # 4 tests (decay, expiration, bornes)
 │   ├── DirectionAnalyzerTests.cs  # 6 tests (silence, pan L/R/center, seuil)
 │   ├── AngleMappingTests.cs       # 4 tests (PanToAngle)
 │   ├── PanNormalizationTests.cs   # 5 tests (NormalizePan)
 │   ├── SpectrumAnalyzerTests.cs   # 4 tests (FFT peak, silence, output size)
 │   ├── FrequencyBandFilterTests.cs # 5 tests (bandes, pan, silence)
-│   └── AdaptiveThresholdTests.cs  # 5 tests (seuil adaptatif, spike, EMA)
+│   └── AdaptiveThresholdTests.cs  # 14 tests (EMA dual-speed, spike, catch-up, convergence)
 ```
 
 ## Pipeline audio
@@ -57,12 +57,15 @@ AudioCapture → buffers
 - `Ctrl+Shift+Up/Down` : Sensibilité ±
 - `Ctrl+Shift+Left/Right` : Pan range ±
 - `Ctrl+Shift+S` : Toggle spectre
+- `Ctrl+Shift+D` : Toggle debug
+- `Ctrl+Shift+A` : Cycle adapt time (0.5 / 1.5 / 3.0s)
+- `Ctrl+Shift+N` : Cycle noise floor (-60 / -40 / -20 dB)
 - `Ctrl+Shift+Q` : Quitter
 
 ## Commandes utiles
 ```bash
 dotnet build
-dotnet test      # 33 tests
+dotnet test      # 47 tests
 dotnet run --project SoundRadar
 ```
 
@@ -72,10 +75,15 @@ dotnet run --project SoundRadar
 - FluentAssertions 8.x : `BeGreaterThanOrEqualTo` / `BeLessThanOrEqualTo`
 - Le projet de tests doit cibler `net8.0-windows` pour référencer le projet WPF
 
+## Seuil adaptatif (AdaptiveThreshold)
+- EMA dual-speed : alphaFast pour le bruit ambiant, alphaSlow (10× plus lent) pour les spikes
+- Catch-up : après 20 frames consécutives de spike (~0.33s), bascule en alphaFast (le "spike" est un nouveau niveau ambiant)
+- Calibration par défaut : adaptationTimeSec=0.5, triggerFactor=1.5, noiseFloorDb=-60
+
 ## État du projet
 - **Phase 1 terminée** : capture audio, analyse directionnelle, overlay
-- **Phase 2 terminée** : FFT, bandes fréquentielles, seuil adaptatif, spectre
-- 33/33 tests passent
+- **Phase 2 terminée** : FFT, bandes fréquentielles, seuil adaptatif, spectre, calibrage
+- 47/47 tests passent
 - Repo GitHub : https://github.com/T-Flag/SoundRadar
 
 ## Git
