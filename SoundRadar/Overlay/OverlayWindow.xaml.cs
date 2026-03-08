@@ -49,7 +49,7 @@ public partial class OverlayWindow : Window
     private static readonly FontFamily MonoFont = new("Consolas");
     private const double DebugFontSize = 11.5;
     private static readonly SolidColorBrush DebugFg = new(Color.FromArgb(220, 255, 255, 255));
-    private static readonly SolidColorBrush DebugBg = new(Color.FromArgb(128, 0, 0, 0));
+    private static readonly SolidColorBrush DebugBg = new(Color.FromArgb(217, 0, 0, 0));
 
     // --- Win32 click-through ---
     private const int WS_EX_TRANSPARENT = 0x00000020;

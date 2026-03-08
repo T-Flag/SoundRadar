@@ -9,7 +9,7 @@ public class AdaptiveThresholdTests
     [Fact]
     public void ConstantLevel_ShouldNotTrigger()
     {
-        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 2.5);
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
         var bands = CreateBands(energy: 0.1);
         int triggered = 0;
 
@@ -26,7 +26,7 @@ public class AdaptiveThresholdTests
     [Fact]
     public void ConstantThenSpike3x_ShouldTrigger()
     {
-        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 2.5);
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
         var normalBands = CreateBands(energy: 0.1);
 
         // Stabilize baseline
@@ -43,14 +43,14 @@ public class AdaptiveThresholdTests
     [Fact]
     public void ConstantThenSpike1_5x_ShouldNotTrigger()
     {
-        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 2.5);
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
         var normalBands = CreateBands(energy: 0.1);
 
         // Stabilize baseline
         for (int i = 0; i < 300; i++)
             threshold.Process(normalBands, frameDurationSec: 1.0 / 60);
 
-        // Spike at 1.5x (below 2.5 factor)
+        // Spike at 1.5x (at threshold, not above) → should NOT trigger
         var spikeBands = CreateBands(energy: 0.15);
         var result = threshold.Process(spikeBands, frameDurationSec: 1.0 / 60);
 
@@ -60,7 +60,7 @@ public class AdaptiveThresholdTests
     [Fact]
     public void AfterSpike_AverageShouldNotRise()
     {
-        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 2.5);
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
         var normalBands = CreateBands(energy: 0.1);
 
         // Stabilize baseline
@@ -82,7 +82,7 @@ public class AdaptiveThresholdTests
     [Fact]
     public void SilenceThenSound_ShouldTrigger()
     {
-        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 2.5);
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
         var silence = CreateBands(energy: 0.0);
 
         // Feed silence
@@ -99,7 +99,7 @@ public class AdaptiveThresholdTests
     [Fact]
     public void ConstantLevel_BaselineShouldConverge()
     {
-        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 2.5);
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
         var bands = CreateBands(energy: 0.1);
 
         // Feed 100 frames of constant signal

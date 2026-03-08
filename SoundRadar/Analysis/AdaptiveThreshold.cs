@@ -42,7 +42,7 @@ public class AdaptiveThreshold
             double avg = _averages[band.Name];
             double threshold = avg * _triggerFactor;
 
-            bool isSpike = band.Energy > threshold && band.Energy > 1e-10;
+            bool isSpike = band.Energy > threshold && band.Energy > 0.01;
 
             if (isSpike)
             {
