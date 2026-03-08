@@ -486,7 +486,7 @@ public partial class OverlayWindow : Window
 
         string bandsSection = BuildBandsSection();
 
-        double triggerFactor = data?.TriggerFactor ?? 2.5;
+        double triggerFactor = data?.TriggerFactor ?? 1.5;
         double adaptTime = _config?.AdaptiveThreshold.AdaptationTimeSec ?? 3.0;
 
         // Settings section with highlight support
@@ -536,18 +536,17 @@ public partial class OverlayWindow : Window
 
         for (int i = 0; i < bands.Length && i < 4; i++)
         {
-            double energy = Math.Sqrt(bands[i].Energy);
-            double normalized = Math.Min(energy * 5, 1.0);
-            int filled = (int)(normalized * 10);
+            double energy = bands[i].Energy; // already normalized [0,1]
+            int filled = (int)(energy * 10);
             int empty = 10 - filled;
             string bar = new string('\u2588', filled) + new string('\u2591', empty);
             string panStr = FormatSigned(bands[i].Pan, 2);
 
             // Per-band baseline and trigger from AdaptiveThreshold
             double bandBase = _adaptiveThreshold?.GetAverage(names[i]) ?? 0;
-            double bandTrig = bandBase * (_adaptiveThreshold?.TriggerFactor ?? 2.5);
+            double bandTrig = bandBase * (_adaptiveThreshold?.TriggerFactor ?? 1.5);
 
-            sb.AppendLine($"{names[i],-8} {ranges[i],-14}: {bar}  {normalized:F2}  pan:{panStr}  base:{bandBase:F4}  trig:{bandTrig:F4}");
+            sb.AppendLine($"{names[i],-8} {ranges[i],-14}: {bar}  {energy:F2} (raw:{bands[i].RawEnergy:F4})  pan:{panStr}  base:{bandBase:F4}  trig:{bandTrig:F4}");
         }
         return sb.ToString();
     }
@@ -641,8 +640,8 @@ public partial class OverlayWindow : Window
 
         for (int i = 0; i < bands.Length && i < 4; i++)
         {
-            double energy = Math.Sqrt(bands[i].Energy);
-            double barHeight = Math.Min(energy * SpectrumBarMaxHeight * 5, SpectrumBarMaxHeight);
+            double energy = bands[i].Energy; // already normalized [0,1]
+            double barHeight = energy * SpectrumBarMaxHeight;
             double x = startX + i * (SpectrumBarWidth + SpectrumMargin);
 
             var barColor = i < bandColors.Length ? bandColors[i] : Colors.White;

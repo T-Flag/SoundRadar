@@ -69,21 +69,21 @@ public class DirectionAnalyzer
         float rightRms = (float)Math.Sqrt(rightSumSq / frameCount);
         float totalRms = (float)Math.Sqrt((leftSumSq + rightSumSq) / (2 * frameCount));
 
-        if (totalRms < _intensityThreshold)
-            return;
-
         float pan = 0f;
         float sum = leftRms + rightRms;
         if (sum > 0)
             pan = (rightRms - leftRms) / sum;
 
-        float intensity = Math.Clamp(totalRms, 0f, 1f);
-
+        // Always update raw values for debug display, even below threshold
         LastRawPan = pan;
         LastRawIntensity = totalRms;
+        LastNormalizedPan = NormalizePan(pan, _maxExpectedPan);
 
-        float normalizedPan = NormalizePan(pan, _maxExpectedPan);
-        LastNormalizedPan = normalizedPan;
+        if (totalRms < _intensityThreshold)
+            return;
+
+        float intensity = Math.Clamp(totalRms, 0f, 1f);
+        float normalizedPan = LastNormalizedPan;
 
         SoundDetected?.Invoke(new SoundEvent
         {

@@ -114,7 +114,7 @@ public class AdaptiveThresholdTests
     [Fact]
     public void TriggerLevel_ShouldEqualBaseline_TimesFactor()
     {
-        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 2.5);
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
         var bands = CreateBands(energy: 0.1);
 
         // Stabilize
@@ -122,11 +122,59 @@ public class AdaptiveThresholdTests
             threshold.Process(bands, frameDurationSec: 1.0 / 60);
 
         double avg = threshold.GetAverage("Mid");
-        double expectedTrigger = avg * 2.5;
+        double expectedTrigger = avg * 1.5;
 
         // Verify trigger level relationship
         expectedTrigger.Should().BeApproximately(avg * threshold.TriggerFactor, 0.001);
         avg.Should().BeApproximately(0.1, 0.005);
+    }
+
+    [Fact]
+    public void ConstantLevel05_BaselineShouldConverge()
+    {
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
+        var bands = CreateBands(energy: 0.5);
+
+        // Feed 100 frames of constant signal
+        for (int i = 0; i < 100; i++)
+            threshold.Process(bands, frameDurationSec: 1.0 / 60);
+
+        double avg = threshold.GetAverage("Mid");
+        avg.Should().BeApproximately(0.5, 0.05);
+    }
+
+    [Fact]
+    public void TriggerFactor1_5_Spike2x_ShouldTrigger()
+    {
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
+        var normalBands = CreateBands(energy: 0.3);
+
+        // Stabilize baseline at 0.3
+        for (int i = 0; i < 300; i++)
+            threshold.Process(normalBands, frameDurationSec: 1.0 / 60);
+
+        // Spike at 2x (0.6 > 0.3 * 1.5 = 0.45) → should trigger
+        var spikeBands = CreateBands(energy: 0.6);
+        var result = threshold.Process(spikeBands, frameDurationSec: 1.0 / 60);
+
+        result.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void TriggerFactor1_5_Spike1_2x_ShouldNotTrigger()
+    {
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
+        var normalBands = CreateBands(energy: 0.3);
+
+        // Stabilize baseline at 0.3
+        for (int i = 0; i < 300; i++)
+            threshold.Process(normalBands, frameDurationSec: 1.0 / 60);
+
+        // Spike at 1.2x (0.36 < 0.3 * 1.5 = 0.45) → should NOT trigger
+        var spikeBands = CreateBands(energy: 0.36);
+        var result = threshold.Process(spikeBands, frameDurationSec: 1.0 / 60);
+
+        result.Should().BeEmpty();
     }
 
     private static BandAnalysis[] CreateBands(double energy)

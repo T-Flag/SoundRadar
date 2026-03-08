@@ -20,7 +20,9 @@ public partial class App : Application
             subBass: (config.FrequencyBands.SubBass[0], config.FrequencyBands.SubBass[1]),
             lowMid: (config.FrequencyBands.LowMid[0], config.FrequencyBands.LowMid[1]),
             mid: (config.FrequencyBands.Mid[0], config.FrequencyBands.Mid[1]),
-            highMid: (config.FrequencyBands.HighMid[0], config.FrequencyBands.HighMid[1])
+            highMid: (config.FrequencyBands.HighMid[0], config.FrequencyBands.HighMid[1]),
+            noiseFloorDb: config.FrequencyBands.NoiseFloorDb,
+            ceilingDb: config.FrequencyBands.CeilingDb
         );
         var adaptiveThreshold = new AdaptiveThreshold(
             config.AdaptiveThreshold.AdaptationTimeSec,

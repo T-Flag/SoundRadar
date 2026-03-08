@@ -107,6 +107,71 @@ public class FrequencyBandFilterTests
         var bands = filter.Analyze(left, right, SampleRate, FftSize);
 
         foreach (var band in bands)
-            band.Energy.Should().BeLessThan(0.001);
+            band.Energy.Should().BeLessThan(0.01);
+    }
+
+    [Fact]
+    public void Silence_NormalizedEnergy_ShouldBeNearZero()
+    {
+        var spectrumAnalyzer = new SpectrumAnalyzer(FftSize);
+        var filter = new FrequencyBandFilter();
+        var buffer = new float[FftSize * 2];
+
+        var (left, right) = spectrumAnalyzer.Analyze(buffer, SampleRate);
+        var bands = filter.Analyze(left, right, SampleRate, FftSize);
+
+        foreach (var band in bands)
+            band.Energy.Should().BeLessThanOrEqualTo(0.01);
+    }
+
+    [Fact]
+    public void LoudSine_NormalizedEnergy_ShouldBeNearOne()
+    {
+        var spectrumAnalyzer = new SpectrumAnalyzer(FftSize);
+        var filter = new FrequencyBandFilter();
+        var buffer = GenerateStereoSine(250f, SampleRate, FftSize, leftAmp: 1f, rightAmp: 1f);
+
+        var (left, right) = spectrumAnalyzer.Analyze(buffer, SampleRate);
+        var bands = filter.Analyze(left, right, SampleRate, FftSize);
+
+        var lowMid = bands.First(b => b.Name == "LowMid");
+        lowMid.Energy.Should().BeGreaterThanOrEqualTo(0.5);
+        lowMid.Energy.Should().BeLessThanOrEqualTo(1.0);
+    }
+
+    [Fact]
+    public void QuietSine_NormalizedEnergy_ShouldBeBetween()
+    {
+        var spectrumAnalyzer = new SpectrumAnalyzer(FftSize);
+        var filter = new FrequencyBandFilter();
+        var buffer = GenerateStereoSine(250f, SampleRate, FftSize, leftAmp: 0.01f, rightAmp: 0.01f);
+
+        var (left, right) = spectrumAnalyzer.Analyze(buffer, SampleRate);
+        var bands = filter.Analyze(left, right, SampleRate, FftSize);
+
+        var lowMid = bands.First(b => b.Name == "LowMid");
+        lowMid.Energy.Should().BeGreaterThanOrEqualTo(0.1);
+        lowMid.Energy.Should().BeLessThanOrEqualTo(0.7);
+    }
+
+    [Fact]
+    public void EnergyVariesWithAmplitude_NotAlwaysOne()
+    {
+        var spectrumAnalyzer = new SpectrumAnalyzer(FftSize);
+        var filter = new FrequencyBandFilter();
+
+        var loudBuffer = GenerateStereoSine(250f, SampleRate, FftSize, leftAmp: 1f, rightAmp: 1f);
+        var quietBuffer = GenerateStereoSine(250f, SampleRate, FftSize, leftAmp: 0.1f, rightAmp: 0.1f);
+
+        var (leftLoud, rightLoud) = spectrumAnalyzer.Analyze(loudBuffer, SampleRate);
+        var loudBands = filter.Analyze(leftLoud, rightLoud, SampleRate, FftSize);
+
+        var (leftQuiet, rightQuiet) = spectrumAnalyzer.Analyze(quietBuffer, SampleRate);
+        var quietBands = filter.Analyze(leftQuiet, rightQuiet, SampleRate, FftSize);
+
+        var loudEnergy = loudBands.First(b => b.Name == "LowMid").Energy;
+        var quietEnergy = quietBands.First(b => b.Name == "LowMid").Energy;
+
+        loudEnergy.Should().BeGreaterThan(quietEnergy);
     }
 }
