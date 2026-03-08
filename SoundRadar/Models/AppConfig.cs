@@ -25,6 +25,7 @@ public class AppConfig
     public AdaptiveThresholdConfig AdaptiveThreshold { get; set; } = new();
     public FrequencyBandsConfig FrequencyBands { get; set; } = new();
     public bool SpectrumDisplayVisible { get; set; } = false;
+    public bool DebugVisible { get; set; } = true;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

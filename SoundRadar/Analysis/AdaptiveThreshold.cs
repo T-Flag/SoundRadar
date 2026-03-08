@@ -15,6 +15,8 @@ public class AdaptiveThreshold
         _triggerFactor = triggerFactor;
     }
 
+    public double TriggerFactor => _triggerFactor;
+
     public double GetAverage(string bandName)
     {
         return _averages.TryGetValue(bandName, out var avg) ? avg : 0;

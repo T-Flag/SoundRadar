@@ -9,6 +9,11 @@ public class DirectionAnalyzer
 
     public event Action<SoundEvent>? SoundDetected;
 
+    // Last computed values for debug display
+    public float LastRawPan { get; private set; }
+    public float LastNormalizedPan { get; private set; }
+    public float LastRawIntensity { get; private set; }
+
     public float IntensityThreshold
     {
         get => _intensityThreshold;
@@ -74,7 +79,11 @@ public class DirectionAnalyzer
 
         float intensity = Math.Clamp(totalRms, 0f, 1f);
 
+        LastRawPan = pan;
+        LastRawIntensity = totalRms;
+
         float normalizedPan = NormalizePan(pan, _maxExpectedPan);
+        LastNormalizedPan = normalizedPan;
 
         SoundDetected?.Invoke(new SoundEvent
         {

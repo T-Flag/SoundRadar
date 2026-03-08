@@ -32,6 +32,7 @@ public partial class App : Application
 
         overlay.SetAnalyzer(analyzer);
         overlay.SetConfig(config);
+        overlay.SetAdaptiveThreshold(adaptiveThreshold);
 
         if (!config.OverlayVisible)
             overlay.SetOverlayVisible(false);
@@ -46,6 +47,22 @@ public partial class App : Application
         {
             // Legacy direction analysis
             analyzer.ProcessBuffer(samples, sampleRate);
+
+            // Update debug data
+            var debugData = new DebugData
+            {
+                SampleRate = sampleRate,
+                BufferSize = samples.Length / 2,
+                CaptureActive = true,
+                RawPan = analyzer.LastRawPan,
+                NormalizedPan = analyzer.LastNormalizedPan,
+                RawIntensity = analyzer.LastRawIntensity,
+                MaxExpectedPan = analyzer.MaxExpectedPan,
+                BaselineAvg = adaptiveThreshold.GetAverage("Mid"),
+                TriggerLevel = adaptiveThreshold.GetAverage("Mid") * adaptiveThreshold.TriggerFactor,
+                TriggerFactor = adaptiveThreshold.TriggerFactor,
+            };
+            overlay.Dispatcher.Invoke(() => overlay.UpdateDebugData(debugData));
 
             // New FFT pipeline
             if (samples.Length / 2 >= spectrumAnalyzer.FftSize)
