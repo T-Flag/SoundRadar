@@ -30,29 +30,32 @@ public class AdaptiveThreshold
     public List<BandAnalysis> Process(BandAnalysis[] bands, double frameDurationSec)
     {
         ProcessCallCount++;
-        double alpha = 1.0 - Math.Exp(-frameDurationSec / _adaptationTimeSec);
+        double alphaFast = 1.0 - Math.Exp(-frameDurationSec / _adaptationTimeSec);
+        double alphaSlow = alphaFast * 0.1; // 10x slower for spikes
         var triggered = new List<BandAnalysis>();
 
         foreach (var band in bands)
         {
+            double energy = band.Energy;
+
             // TryAdd returns true if first time (just initialized) — skip threshold check
-            if (_averages.TryAdd(band.Name, band.Energy))
+            if (_averages.TryAdd(band.Name, energy))
                 continue;
 
             double avg = _averages[band.Name];
             double threshold = avg * _triggerFactor;
-
-            bool isSpike = band.Energy > threshold && band.Energy > 0.01;
+            bool isSpike = energy > threshold && energy > 0.01;
 
             if (isSpike)
             {
                 triggered.Add(band);
-                // Do NOT update average with spike values
+                // Slow update during spike — baseline rises slightly
+                _averages[band.Name] = avg + alphaSlow * (energy - avg);
             }
             else
             {
-                // Update EMA only with non-spike values
-                _averages[band.Name] = avg + alpha * (band.Energy - avg);
+                // Fast update for ambient noise tracking
+                _averages[band.Name] = avg + alphaFast * (energy - avg);
             }
         }
 

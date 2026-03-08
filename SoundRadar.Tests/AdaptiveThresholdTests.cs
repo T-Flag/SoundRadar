@@ -58,25 +58,26 @@ public class AdaptiveThresholdTests
     }
 
     [Fact]
-    public void AfterSpike_AverageShouldNotRise()
+    public void AfterSpike_AverageShouldRiseSlowly()
     {
         var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
         var normalBands = CreateBands(energy: 0.1);
 
-        // Stabilize baseline
+        // Stabilize baseline at ~0.1
         for (int i = 0; i < 300; i++)
             threshold.Process(normalBands, frameDurationSec: 1.0 / 60);
 
         double avgBefore = threshold.GetAverage("LowMid");
 
-        // Send spike
-        var spikeBands = CreateBands(energy: 1.0);
+        // Send spike — baseline should rise slightly (slow EMA)
+        var spikeBands = CreateBands(energy: 0.8);
         threshold.Process(spikeBands, frameDurationSec: 1.0 / 60);
 
         double avgAfter = threshold.GetAverage("LowMid");
 
-        // Average should not have increased (spike excluded from EMA)
-        avgAfter.Should().BeLessThanOrEqualTo(avgBefore + 0.001);
+        // Average should rise, but only slightly (10x slower alpha)
+        avgAfter.Should().BeGreaterThan(avgBefore);
+        avgAfter.Should().BeLessThan(avgBefore + 0.05);
     }
 
     [Fact]
@@ -175,6 +176,44 @@ public class AdaptiveThresholdTests
         var result = threshold.Process(spikeBands, frameDurationSec: 1.0 / 60);
 
         result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ConstantLevel05_200Frames_BaselineShouldConverge()
+    {
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
+        var bands = CreateBands(energy: 0.5);
+
+        // Feed 200 frames (~3.3s at 60fps) of constant 0.5
+        for (int i = 0; i < 200; i++)
+            threshold.Process(bands, frameDurationSec: 1.0 / 60);
+
+        // Baseline must converge toward 0.5, not stay near 0
+        double avg = threshold.GetAverage("Mid");
+        avg.Should().BeGreaterThanOrEqualTo(0.4);
+        avg.Should().BeLessThanOrEqualTo(0.55);
+    }
+
+    [Fact]
+    public void ContinuousNoiseThenSilence_BaselineShouldDrop()
+    {
+        var threshold = new AdaptiveThreshold(adaptationTimeSec: 0.5, triggerFactor: 1.5);
+        var noise = CreateBands(energy: 0.4);
+
+        // Feed continuous noise for ~5s
+        for (int i = 0; i < 300; i++)
+            threshold.Process(noise, frameDurationSec: 1.0 / 60);
+
+        double avgAfterNoise = threshold.GetAverage("Mid");
+        avgAfterNoise.Should().BeGreaterThanOrEqualTo(0.35);
+
+        // Then silence for ~5s
+        var silence = CreateBands(energy: 0.0);
+        for (int i = 0; i < 300; i++)
+            threshold.Process(silence, frameDurationSec: 1.0 / 60);
+
+        double avgAfterSilence = threshold.GetAverage("Mid");
+        avgAfterSilence.Should().BeLessThan(0.05);
     }
 
     private static BandAnalysis[] CreateBands(double energy)
