@@ -15,35 +15,39 @@ Overlay visuel d'accessibilité affichant la direction des sons en temps réel (
 SoundRadar.sln
 ├── SoundRadar/                    # Projet WPF principal
 │   ├── Models/
-│   │   ├── SoundEvent.cs          # Événement sonore (pan, intensity, decay, DominantBand)
+│   │   ├── SoundEvent.cs          # Événement sonore (pan, angle, intensity, decay, DominantBand)
 │   │   ├── BandAnalysis.cs        # Résultat analyse par bande (énergie, pan, intensité)
-│   │   └── AppConfig.cs           # Config JSON persistante
+│   │   ├── DebugData.cs           # Données debug + SoundLogEntry (surround support)
+│   │   └── AppConfig.cs           # Config JSON persistante (+ SurroundConfig)
 │   ├── Analysis/
 │   │   ├── DirectionAnalyzer.cs   # Analyse stéréo L/R → pan (-1 à +1)
+│   │   ├── SurroundAnalyzer.cs    # Analyse 7.1 → angle 360° (barycentre pondéré)
 │   │   ├── SpectrumAnalyzer.cs    # FFT temps réel (Hanning window, FftSharp)
 │   │   ├── FrequencyBandFilter.cs # Découpage en 4 bandes fréquentielles
 │   │   └── AdaptiveThreshold.cs   # Seuil adaptatif EMA dual-speed + catch-up
 │   ├── Audio/AudioCaptureService.cs   # Capture WASAPI loopback via NAudio
 │   ├── Overlay/OverlayWindow.xaml(.cs) # Fenêtre transparente click-through + spectre
 │   └── App.xaml(.cs)              # Point d'entrée, câblage pipeline
-├── SoundRadar.Tests/              # Tests unitaires xUnit (47 tests)
+├── SoundRadar.Tests/              # Tests unitaires xUnit (59 tests)
 │   ├── SoundEventTests.cs         # 4 tests (decay, expiration, bornes)
 │   ├── DirectionAnalyzerTests.cs  # 6 tests (silence, pan L/R/center, seuil)
 │   ├── AngleMappingTests.cs       # 4 tests (PanToAngle)
 │   ├── PanNormalizationTests.cs   # 5 tests (NormalizePan)
 │   ├── SpectrumAnalyzerTests.cs   # 4 tests (FFT peak, silence, output size)
 │   ├── FrequencyBandFilterTests.cs # 5 tests (bandes, pan, silence)
-│   └── AdaptiveThresholdTests.cs  # 14 tests (EMA dual-speed, spike, catch-up, convergence)
+│   ├── AdaptiveThresholdTests.cs  # 14 tests (EMA dual-speed, spike, catch-up, convergence)
+│   └── SurroundAnalyzerTests.cs   # 12 tests (angle par canal, barycentre, silence, LFE)
 ```
 
 ## Pipeline audio
 ```
-AudioCapture → buffers
-  ├──→ DirectionAnalyzer (fallback, pan global)
-  └──→ SpectrumAnalyzer (FFT par canal)
+AudioCapture → buffers (stéréo ou 7.1)
+  ├──→ SurroundAnalyzer (7.1 → angle 360°, si ≥8 canaux)
+  ├──→ DirectionAnalyzer (fallback stéréo, pan L/R)
+  └──→ SpectrumAnalyzer (FFT par canal, downmix stéréo si 7.1)
         └──→ FrequencyBandFilter (énergie/pan par bande)
               └──→ AdaptiveThreshold (filtrage par bande)
-                    └──→ SoundEvent enrichi (top 3 bandes)
+                    └──→ SoundEvent enrichi (angle/pan + top 3 bandes)
 ```
 
 ## Bandes de fréquences
@@ -65,7 +69,7 @@ AudioCapture → buffers
 ## Commandes utiles
 ```bash
 dotnet build
-dotnet test      # 47 tests
+dotnet test      # 59 tests
 dotnet run --project SoundRadar
 ```
 
@@ -80,10 +84,18 @@ dotnet run --project SoundRadar
 - Catch-up : après 20 frames consécutives de spike (~0.33s), bascule en alphaFast (le "spike" est un nouveau niveau ambiant)
 - Calibration par défaut : adaptationTimeSec=0.5, triggerFactor=1.5, noiseFloorDb=-60
 
+## Surround 7.1 (SurroundAnalyzer)
+- Barycentre pondéré : angle = atan2(Σ energy×sin(θ), Σ energy×cos(θ))
+- 7 canaux directionnels : FL(-45°), FR(+45°), FC(0°), SL(-90°), SR(+90°), RL(-135°), RR(+135°)
+- LFE (canal 3) ignoré — pas directionnel
+- Auto-détection : si WASAPI device ≥ 8 canaux, mode surround activé automatiquement
+- Downmix FL+FR vers stéréo pour le pipeline FFT existant
+
 ## État du projet
 - **Phase 1 terminée** : capture audio, analyse directionnelle, overlay
 - **Phase 2 terminée** : FFT, bandes fréquentielles, seuil adaptatif, spectre, calibrage
-- 47/47 tests passent
+- **Phase 3 terminée** : support 7.1 surround, radar 360°, debug per-channel
+- 59/59 tests passent
 - Repo GitHub : https://github.com/T-Flag/SoundRadar
 
 ## Git
