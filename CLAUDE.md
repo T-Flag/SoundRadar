@@ -24,19 +24,21 @@ SoundRadar.sln
 │   │   ├── SurroundAnalyzer.cs    # Analyse 7.1 → angle 360° (barycentre pondéré)
 │   │   ├── SpectrumAnalyzer.cs    # FFT temps réel (Hanning window, FftSharp)
 │   │   ├── FrequencyBandFilter.cs # Découpage en 4 bandes fréquentielles
+│   │   ├── SelfSoundFilter.cs    # Filtre sons propres (front-center, surround only)
 │   │   └── AdaptiveThreshold.cs   # Seuil adaptatif EMA dual-speed + catch-up
 │   ├── Audio/AudioCaptureService.cs   # Capture WASAPI loopback via NAudio
 │   ├── Overlay/OverlayWindow.xaml(.cs) # Fenêtre transparente click-through + spectre
 │   └── App.xaml(.cs)              # Point d'entrée, câblage pipeline
-├── SoundRadar.Tests/              # Tests unitaires xUnit (59 tests)
+├── SoundRadar.Tests/              # Tests unitaires xUnit (66 tests)
 │   ├── SoundEventTests.cs         # 4 tests (decay, expiration, bornes)
-│   ├── DirectionAnalyzerTests.cs  # 6 tests (silence, pan L/R/center, seuil)
+│   ├── DirectionAnalyzerTests.cs  # 5 tests (silence, pan L/R/center, intensité)
 │   ├── AngleMappingTests.cs       # 4 tests (PanToAngle)
 │   ├── PanNormalizationTests.cs   # 5 tests (NormalizePan)
 │   ├── SpectrumAnalyzerTests.cs   # 4 tests (FFT peak, silence, output size)
-│   ├── FrequencyBandFilterTests.cs # 5 tests (bandes, pan, silence)
+│   ├── FrequencyBandFilterTests.cs # 8 tests (bandes, pan, silence, normalisation)
 │   ├── AdaptiveThresholdTests.cs  # 14 tests (EMA dual-speed, spike, catch-up, convergence)
-│   └── SurroundAnalyzerTests.cs   # 12 tests (angle par canal, barycentre, silence, LFE)
+│   ├── SurroundAnalyzerTests.cs   # 12 tests (angle par canal, barycentre, silence, LFE)
+│   └── SelfSoundFilterTests.cs   # 8 tests (angle, seuil, surround/stéréo, toggle)
 ```
 
 ## Pipeline audio
@@ -64,12 +66,15 @@ AudioCapture → buffers (stéréo ou 7.1)
 - `Ctrl+Shift+D` : Toggle debug
 - `Ctrl+Shift+A` : Cycle adapt time (0.5 / 1.5 / 3.0s)
 - `Ctrl+Shift+N` : Cycle noise floor (-60 / -40 / -20 dB)
+- `Ctrl+Shift+V` : Cycle display mode (Arcs / Dots / Diamonds)
+- `Ctrl+Shift+F` : Toggle self-sound filter
+- `Ctrl+Shift+B` : Toggle edge flash
 - `Ctrl+Shift+Q` : Quitter
 
 ## Commandes utiles
 ```bash
 dotnet build
-dotnet test      # 59 tests
+dotnet test      # 66 tests
 dotnet run --project SoundRadar
 ```
 
@@ -95,7 +100,7 @@ dotnet run --project SoundRadar
 - **Phase 1 terminée** : capture audio, analyse directionnelle, overlay
 - **Phase 2 terminée** : FFT, bandes fréquentielles, seuil adaptatif, spectre, calibrage
 - **Phase 3 terminée** : support 7.1 surround, radar 360°, debug per-channel
-- 59/59 tests passent
+- 66/66 tests passent
 - Repo GitHub : https://github.com/T-Flag/SoundRadar
 
 ## Git

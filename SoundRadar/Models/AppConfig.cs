@@ -22,6 +22,8 @@ public class FrequencyBandsConfig
 public class SurroundConfig
 {
     public bool Enabled { get; set; } = true;
+    public float SelfSoundFilterAngle { get; set; } = 30f;
+    public bool SelfSoundFilterEnabled { get; set; } = true;
     public Dictionary<string, float> ChannelAngles { get; set; } = new()
     {
         ["FL"] = -45, ["FR"] = 45, ["FC"] = 0,
@@ -39,6 +41,7 @@ public class AppConfig
     public SurroundConfig Surround { get; set; } = new();
     public bool SpectrumDisplayVisible { get; set; } = false;
     public bool DebugVisible { get; set; } = true;
+    public bool EdgeFlashEnabled { get; set; } = true;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

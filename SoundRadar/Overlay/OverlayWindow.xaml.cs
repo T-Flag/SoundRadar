@@ -54,6 +54,10 @@ public partial class OverlayWindow : Window
     private const double PulseIntensityThreshold = 0.7;
     private const double PulseAmplitude = 0.3;
 
+    // --- Edge flash ---
+    private const double EdgeFlashDurationMs = 300.0;
+    private const double EdgeFlashWidth = 80.0;
+
     // Display modes
     private static readonly string[] DisplayModeNames = { "Arcs", "Dots", "Diamonds" };
 
@@ -94,6 +98,8 @@ public partial class OverlayWindow : Window
     private const int HOTKEY_ADAPT_TIME = 9;
     private const int HOTKEY_NOISE_FLOOR = 10;
     private const int HOTKEY_DISPLAY_MODE = 11;
+    private const int HOTKEY_SELF_FILTER = 12;
+    private const int HOTKEY_EDGE_FLASH = 13;
     private const uint MOD_CTRL_SHIFT = 0x0002 | 0x0004;
     private const uint VK_O = 0x4F;
     private const uint VK_UP = 0x26;
@@ -106,6 +112,8 @@ public partial class OverlayWindow : Window
     private const uint VK_A = 0x41;
     private const uint VK_N = 0x4E;
     private const uint VK_V = 0x56;
+    private const uint VK_F = 0x46;
+    private const uint VK_B = 0x42;
 
     // Cycle values for hotkeys
     private static readonly double[] AdaptTimeValues = { 0.5, 1.5, 3.0 };
@@ -140,6 +148,9 @@ public partial class OverlayWindow : Window
     private bool _debugVisible = true;
     private bool _isSurroundMode = false;
     private int _displayMode = 2; // 0=Arcs, 1=Dots, 2=Diamonds
+    private bool _selfSoundFilterEnabled = true;
+    private float _selfSoundFilterAngle = 30f;
+    private bool _edgeFlashEnabled = true;
     private IntPtr _hwnd;
     private BandAnalysis[]? _currentBands;
     private DebugData? _debugData;
@@ -203,6 +214,9 @@ public partial class OverlayWindow : Window
         _config = config;
         _spectrumVisible = config.SpectrumDisplayVisible;
         _debugVisible = config.DebugVisible;
+        _selfSoundFilterEnabled = config.Surround.SelfSoundFilterEnabled;
+        _selfSoundFilterAngle = config.Surround.SelfSoundFilterAngle;
+        _edgeFlashEnabled = config.EdgeFlashEnabled;
     }
 
     public void SetSurroundMode(bool surround)
@@ -245,6 +259,8 @@ public partial class OverlayWindow : Window
         RegisterHotKey(_hwnd, HOTKEY_ADAPT_TIME, MOD_CTRL_SHIFT, VK_A);
         RegisterHotKey(_hwnd, HOTKEY_NOISE_FLOOR, MOD_CTRL_SHIFT, VK_N);
         RegisterHotKey(_hwnd, HOTKEY_DISPLAY_MODE, MOD_CTRL_SHIFT, VK_V);
+        RegisterHotKey(_hwnd, HOTKEY_SELF_FILTER, MOD_CTRL_SHIFT, VK_F);
+        RegisterHotKey(_hwnd, HOTKEY_EDGE_FLASH, MOD_CTRL_SHIFT, VK_B);
 
         var source = HwndSource.FromHwnd(_hwnd);
         source?.AddHook(WndProc);
@@ -328,6 +344,18 @@ public partial class OverlayWindow : Window
                     FlashSetting("DisplayMode");
                     handled = true;
                     break;
+                case HOTKEY_SELF_FILTER:
+                    _selfSoundFilterEnabled = !_selfSoundFilterEnabled;
+                    FlashSetting("SelfSoundFilter");
+                    SaveConfig();
+                    handled = true;
+                    break;
+                case HOTKEY_EDGE_FLASH:
+                    _edgeFlashEnabled = !_edgeFlashEnabled;
+                    FlashSetting("EdgeFlash");
+                    SaveConfig();
+                    handled = true;
+                    break;
                 case HOTKEY_QUIT:
                     SaveConfig();
                     Application.Current.Shutdown();
@@ -377,6 +405,8 @@ public partial class OverlayWindow : Window
             UnregisterHotKey(_hwnd, HOTKEY_ADAPT_TIME);
             UnregisterHotKey(_hwnd, HOTKEY_NOISE_FLOOR);
             UnregisterHotKey(_hwnd, HOTKEY_DISPLAY_MODE);
+            UnregisterHotKey(_hwnd, HOTKEY_SELF_FILTER);
+            UnregisterHotKey(_hwnd, HOTKEY_EDGE_FLASH);
         }
         base.OnClosed(e);
     }
@@ -396,6 +426,9 @@ public partial class OverlayWindow : Window
         _config.OverlayVisible = _overlayVisible;
         _config.SpectrumDisplayVisible = _spectrumVisible;
         _config.DebugVisible = _debugVisible;
+        _config.Surround.SelfSoundFilterEnabled = _selfSoundFilterEnabled;
+        _config.Surround.SelfSoundFilterAngle = _selfSoundFilterAngle;
+        _config.EdgeFlashEnabled = _edgeFlashEnabled;
         _config.Save();
     }
 
@@ -464,9 +497,19 @@ public partial class OverlayWindow : Window
             DrawCompassLabels(centerX, centerY, radius);
         }
 
+        // Filter self-sounds and build visible list
+        var visible = new List<SoundEvent>();
         foreach (var evt in active)
         {
             _events.Enqueue(evt);
+            bool filtered = SelfSoundFilter.ShouldFilter(
+                evt.Angle, evt.IsSurround, _selfSoundFilterEnabled, _selfSoundFilterAngle);
+            if (!filtered)
+                visible.Add(evt);
+        }
+
+        foreach (var evt in visible)
+        {
             switch (_displayMode)
             {
                 case 1: DrawRadarDot(evt, centerX, centerY, radius); break;
@@ -475,9 +518,16 @@ public partial class OverlayWindow : Window
             }
         }
 
+        // Edge flash
+        if (_edgeFlashEnabled)
+        {
+            foreach (var evt in visible)
+                DrawEdgeFlash(evt, width, height);
+        }
+
         if (_debugVisible)
         {
-            foreach (var evt in active)
+            foreach (var evt in visible)
             {
                 if (evt.DominantBand != null)
                     DrawArcLabel(evt, centerX, centerY, radius);
@@ -492,7 +542,7 @@ public partial class OverlayWindow : Window
 
         if (_debugVisible)
         {
-            DrawDebugPanel(width, height, active.Count);
+            DrawDebugPanel(width, height, visible.Count);
             DrawControlsPanel(width, height);
             DrawEventLog(width, height);
         }
@@ -871,6 +921,8 @@ public partial class OverlayWindow : Window
         bool hlAdapt = _highlightSetting == "AdaptTime";
         bool hlNoise = _highlightSetting == "NoiseFloor";
         bool hlMode = _highlightSetting == "DisplayMode";
+        bool hlFilter = _highlightSetting == "SelfSoundFilter";
+        bool hlFlash = _highlightSetting == "EdgeFlash";
         string panVal = _analyzer != null ? $"{_analyzer.MaxExpectedPan:F2}" : "0.25";
 
         var sb = new StringBuilder();
@@ -907,6 +959,9 @@ public partial class OverlayWindow : Window
         sb.AppendLine($"{(hlAdapt ? ">>>" : "   ")} Adapt time:     {adaptTime:F1}s  [Ctrl+Shift+A]");
         sb.AppendLine($"{(hlNoise ? ">>>" : "   ")} Noise floor:    {noiseFloor:F0}dB  [Ctrl+Shift+N]");
         sb.AppendLine($"{(hlMode ? ">>>" : "   ")} Display mode:   {DisplayModeNames[_displayMode]}  [Ctrl+Shift+V]");
+        string filterStr = _selfSoundFilterEnabled ? $"ON (±{_selfSoundFilterAngle:F0}°)" : "OFF";
+        sb.AppendLine($"{(hlFilter ? ">>>" : "   ")} Self-sound:     {filterStr}  [Ctrl+Shift+F]");
+        sb.AppendLine($"{(hlFlash ? ">>>" : "   ")} Edge flash:     {(_edgeFlashEnabled ? "ON" : "OFF")}  [Ctrl+Shift+B]");
         sb.AppendLine();
         sb.AppendLine("-- Performance --");
         sb.AppendLine($"Frame time:        {_lastFrameTimeMs:F1}ms");
@@ -987,6 +1042,8 @@ public partial class OverlayWindow : Window
             "Ctrl+Shift+Left   MaxPan -0.05\n" +
             "Ctrl+Shift+A      Adapt time cycle\n" +
             "Ctrl+Shift+N      Noise floor cycle\n" +
+            $"Ctrl+Shift+F      Self-sound filter [{(_selfSoundFilterEnabled ? "ON" : "OFF")}]\n" +
+            $"Ctrl+Shift+B      Edge flash [{(_edgeFlashEnabled ? "ON" : "OFF")}]\n" +
             "Ctrl+Shift+Q      Quit";
 
         var panel = CreateDebugTextBlock(controlsText);
@@ -1075,6 +1132,78 @@ public partial class OverlayWindow : Window
         if (a < 247.5) return "Rear-Left";
         if (a < 292.5) return "Left";
         return "Front-Left";
+    }
+
+    private void DrawEdgeFlash(SoundEvent evt, double width, double height)
+    {
+        float decay = evt.GetDecayFactor();
+        if (decay <= 0) return;
+
+        // Fade over EdgeFlashDurationMs
+        double age = (DateTime.UtcNow - evt.Timestamp).TotalMilliseconds;
+        double flashFade = Math.Clamp(1.0 - age / EdgeFlashDurationMs, 0, 1);
+        if (flashFade <= 0) return;
+
+        Color baseColor;
+        double angleDeg;
+
+        if (evt.IsSurround)
+        {
+            angleDeg = evt.Angle;
+            baseColor = AngleToColor(evt.Angle);
+        }
+        else
+        {
+            bool isLeft = evt.Pan < -CenterPanThreshold;
+            bool isRight = evt.Pan > CenterPanThreshold;
+            baseColor = isLeft ? ColorLeft : isRight ? ColorRight : ColorCenter;
+            angleDeg = DirectionAnalyzer.PanToAngle(evt.Pan);
+        }
+
+        // Normalize angle to [0, 360)
+        double a = ((angleDeg % 360) + 360) % 360;
+
+        byte alpha = (byte)(180 * flashFade * evt.Intensity);
+        var edgeColor = Color.FromArgb(alpha, baseColor.R, baseColor.G, baseColor.B);
+        var transparent = Color.FromArgb(0, baseColor.R, baseColor.G, baseColor.B);
+
+        // Determine edge: top (315-45), right (45-135), bottom (135-225), left (225-315)
+        if (a >= 315 || a < 45)
+        {
+            // Top edge
+            var brush = new LinearGradientBrush(edgeColor, transparent, 90);
+            var rect = new Rectangle { Width = width, Height = EdgeFlashWidth, Fill = brush };
+            Canvas.SetLeft(rect, 0);
+            Canvas.SetTop(rect, 0);
+            OverlayCanvas.Children.Add(rect);
+        }
+        else if (a >= 45 && a < 135)
+        {
+            // Right edge
+            var brush = new LinearGradientBrush(edgeColor, transparent, 0);
+            var rect = new Rectangle { Width = EdgeFlashWidth, Height = height, Fill = brush };
+            Canvas.SetLeft(rect, width - EdgeFlashWidth);
+            Canvas.SetTop(rect, 0);
+            OverlayCanvas.Children.Add(rect);
+        }
+        else if (a >= 135 && a < 225)
+        {
+            // Bottom edge
+            var brush = new LinearGradientBrush(transparent, edgeColor, 90);
+            var rect = new Rectangle { Width = width, Height = EdgeFlashWidth, Fill = brush };
+            Canvas.SetLeft(rect, 0);
+            Canvas.SetTop(rect, height - EdgeFlashWidth);
+            OverlayCanvas.Children.Add(rect);
+        }
+        else
+        {
+            // Left edge (225-315)
+            var brush = new LinearGradientBrush(transparent, edgeColor, 0);
+            var rect = new Rectangle { Width = EdgeFlashWidth, Height = height, Fill = brush };
+            Canvas.SetLeft(rect, 0);
+            Canvas.SetTop(rect, 0);
+            OverlayCanvas.Children.Add(rect);
+        }
     }
 
     private void DrawSpectrumBars(double width, double height)
