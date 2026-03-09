@@ -52,9 +52,18 @@ public partial class OverlayWindow : Window
     private static readonly SolidColorBrush DebugFg = new(Color.FromArgb(220, 255, 255, 255));
     private static readonly SolidColorBrush DebugBg = new(Color.FromArgb(217, 0, 0, 0));
 
-    // --- Win32 click-through ---
+    // --- Win32 click-through & always-on-top ---
     private const int WS_EX_TRANSPARENT = 0x00000020;
+    private const int WS_EX_TOPMOST = 0x00000008;
+    private const int WS_EX_TOOLWINDOW = 0x00000080;
     private const int GWL_EXSTYLE = -20;
+
+    // SetWindowPos constants
+    private static readonly IntPtr HWND_TOPMOST = new(-1);
+    private const uint SWP_NOMOVE = 0x0002;
+    private const uint SWP_NOSIZE = 0x0001;
+    private const uint SWP_NOACTIVATE = 0x0010;
+    private const uint SWP_SHOWWINDOW = 0x0040;
 
     // --- Global hotkeys via RegisterHotKey ---
     private const int WM_HOTKEY = 0x0312;
@@ -98,6 +107,10 @@ public partial class OverlayWindow : Window
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
+
     private readonly ConcurrentQueue<SoundEvent> _events = new();
     private readonly DispatcherTimer _renderTimer;
     private DirectionAnalyzer? _analyzer;
@@ -131,6 +144,7 @@ public partial class OverlayWindow : Window
     {
         InitializeComponent();
         Loaded += OnLoaded;
+        Deactivated += (_, _) => ForceTopmost();
 
         _renderTimer = new DispatcherTimer
         {
@@ -138,6 +152,13 @@ public partial class OverlayWindow : Window
         };
         _renderTimer.Tick += OnRenderTick;
         _renderTimer.Start();
+
+        var topmostTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(100)
+        };
+        topmostTimer.Tick += (_, _) => ForceTopmost();
+        topmostTimer.Start();
     }
 
     public void SetAnalyzer(DirectionAnalyzer analyzer)
@@ -188,7 +209,8 @@ public partial class OverlayWindow : Window
         _hwnd = new WindowInteropHelper(this).Handle;
 
         int extStyle = GetWindowLong(_hwnd, GWL_EXSTYLE);
-        SetWindowLong(_hwnd, GWL_EXSTYLE, extStyle | WS_EX_TRANSPARENT);
+        SetWindowLong(_hwnd, GWL_EXSTYLE, extStyle | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW);
+        ForceTopmost();
 
         RegisterHotKey(_hwnd, HOTKEY_TOGGLE, MOD_CTRL_SHIFT, VK_O);
         RegisterHotKey(_hwnd, HOTKEY_SENS_UP, MOD_CTRL_SHIFT, VK_UP);
@@ -203,6 +225,13 @@ public partial class OverlayWindow : Window
 
         var source = HwndSource.FromHwnd(_hwnd);
         source?.AddHook(WndProc);
+    }
+
+    private void ForceTopmost()
+    {
+        if (_hwnd == IntPtr.Zero) return;
+        SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
 
     private void FlashSetting(string settingName)
