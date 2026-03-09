@@ -276,15 +276,21 @@ public partial class OverlayWindow : Window
                     handled = true;
                     break;
                 case HOTKEY_SENS_UP:
-                    _analyzer.IntensityThreshold /= 1.5f;
-                    FlashSetting("Sensitivity");
-                    SaveConfig();
+                    if (_adaptiveThreshold != null)
+                    {
+                        _adaptiveThreshold.TriggerFactor -= 0.1;
+                        FlashSetting("TriggerFactor");
+                        SaveConfig();
+                    }
                     handled = true;
                     break;
                 case HOTKEY_SENS_DOWN:
-                    _analyzer.IntensityThreshold *= 1.5f;
-                    FlashSetting("Sensitivity");
-                    SaveConfig();
+                    if (_adaptiveThreshold != null)
+                    {
+                        _adaptiveThreshold.TriggerFactor += 0.1;
+                        FlashSetting("TriggerFactor");
+                        SaveConfig();
+                    }
                     handled = true;
                     break;
                 case HOTKEY_PAN_RANGE_UP:
@@ -384,8 +390,9 @@ public partial class OverlayWindow : Window
     private void SaveConfig()
     {
         if (_config == null || _analyzer == null) return;
-        _config.IntensityThreshold = _analyzer.IntensityThreshold;
         _config.MaxExpectedPan = _analyzer.MaxExpectedPan;
+        if (_adaptiveThreshold != null)
+            _config.AdaptiveThreshold.TriggerFactor = _adaptiveThreshold.TriggerFactor;
         _config.OverlayVisible = _overlayVisible;
         _config.SpectrumDisplayVisible = _spectrumVisible;
         _config.DebugVisible = _debugVisible;
@@ -859,12 +866,11 @@ public partial class OverlayWindow : Window
         double noiseFloor = _bandFilter?.NoiseFloorDb ?? -60;
 
         // Settings section with highlight support
-        bool hlSens = _highlightSetting == "Sensitivity";
+        bool hlTrig = _highlightSetting == "TriggerFactor";
         bool hlPan = _highlightSetting == "MaxExpectedPan";
         bool hlAdapt = _highlightSetting == "AdaptTime";
         bool hlNoise = _highlightSetting == "NoiseFloor";
         bool hlMode = _highlightSetting == "DisplayMode";
-        string sensVal = _analyzer != null ? $"{_analyzer.IntensityThreshold:F3}" : "0.010";
         string panVal = _analyzer != null ? $"{_analyzer.MaxExpectedPan:F2}" : "0.25";
 
         var sb = new StringBuilder();
@@ -896,9 +902,8 @@ public partial class OverlayWindow : Window
         sb.Append(bandsSection);
         sb.AppendLine();
         sb.AppendLine("-- Settings --");
-        sb.AppendLine($"{(hlSens ? ">>>" : "   ")} Sensitivity:     {sensVal}  [Ctrl+Shift+Up/Down]");
+        sb.AppendLine($"{(hlTrig ? ">>>" : "   ")} Trigger factor:  {triggerFactor:F1}  [Ctrl+Shift+Up/Down]");
         sb.AppendLine($"{(hlPan ? ">>>" : "   ")} MaxExpectedPan:  {panVal}  [Ctrl+Shift+Left/Right]");
-        sb.AppendLine($"    Trigger factor:  {triggerFactor:F1}");
         sb.AppendLine($"{(hlAdapt ? ">>>" : "   ")} Adapt time:     {adaptTime:F1}s  [Ctrl+Shift+A]");
         sb.AppendLine($"{(hlNoise ? ">>>" : "   ")} Noise floor:    {noiseFloor:F0}dB  [Ctrl+Shift+N]");
         sb.AppendLine($"{(hlMode ? ">>>" : "   ")} Display mode:   {DisplayModeNames[_displayMode]}  [Ctrl+Shift+V]");
@@ -976,8 +981,8 @@ public partial class OverlayWindow : Window
             "Ctrl+Shift+S      Toggle spectrum\n" +
             "Ctrl+Shift+O      Toggle overlay\n" +
             $"Ctrl+Shift+V      Display mode [{DisplayModeNames[_displayMode]}]\n" +
-            "Ctrl+Shift+Up     Sensitivity +\n" +
-            "Ctrl+Shift+Down   Sensitivity -\n" +
+            "Ctrl+Shift+Up     Trigger -0.1\n" +
+            "Ctrl+Shift+Down   Trigger +0.1\n" +
             "Ctrl+Shift+Right  MaxPan +0.05\n" +
             "Ctrl+Shift+Left   MaxPan -0.05\n" +
             "Ctrl+Shift+A      Adapt time cycle\n" +

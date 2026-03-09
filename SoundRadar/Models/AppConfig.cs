@@ -32,7 +32,6 @@ public class SurroundConfig
 
 public class AppConfig
 {
-    public float IntensityThreshold { get; set; } = 0.010f;
     public float MaxExpectedPan { get; set; } = 0.25f;
     public bool OverlayVisible { get; set; } = true;
     public AdaptiveThresholdConfig AdaptiveThreshold { get; set; } = new();

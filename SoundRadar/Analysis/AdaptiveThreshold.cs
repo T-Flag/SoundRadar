@@ -6,7 +6,7 @@ namespace SoundRadar.Analysis;
 public class AdaptiveThreshold
 {
     private double _adaptationTimeSec;
-    private readonly double _triggerFactor;
+    private double _triggerFactor;
     private readonly ConcurrentDictionary<string, double> _averages = new();
     private readonly ConcurrentDictionary<string, int> _consecutiveSpikes = new();
 
@@ -21,7 +21,11 @@ public class AdaptiveThreshold
         _triggerFactor = triggerFactor;
     }
 
-    public double TriggerFactor => _triggerFactor;
+    public double TriggerFactor
+    {
+        get => _triggerFactor;
+        set => _triggerFactor = Math.Clamp(value, 1.1, 3.0);
+    }
     public double AdaptationTimeSec
     {
         get => _adaptationTimeSec;

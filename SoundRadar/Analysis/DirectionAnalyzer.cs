@@ -4,7 +4,6 @@ namespace SoundRadar.Analysis;
 
 public class DirectionAnalyzer
 {
-    private float _intensityThreshold;
     private float _maxExpectedPan;
 
     public event Action<SoundEvent>? SoundDetected;
@@ -14,21 +13,14 @@ public class DirectionAnalyzer
     public float LastNormalizedPan { get; private set; }
     public float LastRawIntensity { get; private set; }
 
-    public float IntensityThreshold
-    {
-        get => _intensityThreshold;
-        set => _intensityThreshold = Math.Clamp(value, 0.001f, 1f);
-    }
-
     public float MaxExpectedPan
     {
         get => _maxExpectedPan;
         set => _maxExpectedPan = Math.Clamp(value, 0.1f, 1f);
     }
 
-    public DirectionAnalyzer(float intensityThreshold = 0.010f, float maxExpectedPan = 0.25f)
+    public DirectionAnalyzer(float maxExpectedPan = 0.25f)
     {
-        _intensityThreshold = intensityThreshold;
         _maxExpectedPan = maxExpectedPan;
     }
 
@@ -79,7 +71,7 @@ public class DirectionAnalyzer
         LastRawIntensity = totalRms;
         LastNormalizedPan = NormalizePan(pan, _maxExpectedPan);
 
-        if (totalRms < _intensityThreshold)
+        if (totalRms == 0f)
             return;
 
         float intensity = Math.Clamp(totalRms, 0f, 1f);

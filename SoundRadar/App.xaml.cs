@@ -17,7 +17,7 @@ public partial class App : Application
 
         var config = AppConfig.Load();
 
-        var analyzer = new DirectionAnalyzer(config.IntensityThreshold, config.MaxExpectedPan);
+        var analyzer = new DirectionAnalyzer(config.MaxExpectedPan);
         var spectrumAnalyzer = new SpectrumAnalyzer(1024);
         var bandFilter = new FrequencyBandFilter(
             subBass: (config.FrequencyBands.SubBass[0], config.FrequencyBands.SubBass[1]),

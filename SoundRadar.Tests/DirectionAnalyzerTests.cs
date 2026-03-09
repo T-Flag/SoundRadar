@@ -35,7 +35,7 @@ public class DirectionAnalyzerTests
     [Fact]
     public void FullLeftBuffer_ShouldEmitPanNearMinusOne()
     {
-        var analyzer = new DirectionAnalyzer(intensityThreshold: 0.01f);
+        var analyzer = new DirectionAnalyzer();
         SoundEvent? received = null;
         analyzer.SoundDetected += e => received = e;
 
@@ -49,7 +49,7 @@ public class DirectionAnalyzerTests
     [Fact]
     public void FullRightBuffer_ShouldEmitPanNearPlusOne()
     {
-        var analyzer = new DirectionAnalyzer(intensityThreshold: 0.01f);
+        var analyzer = new DirectionAnalyzer();
         SoundEvent? received = null;
         analyzer.SoundDetected += e => received = e;
 
@@ -63,7 +63,7 @@ public class DirectionAnalyzerTests
     [Fact]
     public void EqualLeftRight_ShouldEmitPanNearZero()
     {
-        var analyzer = new DirectionAnalyzer(intensityThreshold: 0.01f);
+        var analyzer = new DirectionAnalyzer();
         SoundEvent? received = null;
         analyzer.SoundDetected += e => received = e;
 
@@ -75,22 +75,9 @@ public class DirectionAnalyzerTests
     }
 
     [Fact]
-    public void BufferBelowThreshold_ShouldNotEmitEvent()
+    public void NonSilentBuffer_ShouldEmitEventWithCorrectIntensity()
     {
-        var analyzer = new DirectionAnalyzer(intensityThreshold: 0.5f);
-        SoundEvent? received = null;
-        analyzer.SoundDetected += e => received = e;
-
-        var buffer = CreateStereoBuffer(0.01f, 0.01f);
-        analyzer.ProcessBuffer(buffer, SampleRate);
-
-        received.Should().BeNull();
-    }
-
-    [Fact]
-    public void BufferAboveThreshold_ShouldEmitEventWithCorrectIntensity()
-    {
-        var analyzer = new DirectionAnalyzer(intensityThreshold: 0.01f);
+        var analyzer = new DirectionAnalyzer();
         SoundEvent? received = null;
         analyzer.SoundDetected += e => received = e;
 
