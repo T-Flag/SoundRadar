@@ -12,6 +12,9 @@ public partial class App : Application
 
     private void OnStartup(object sender, StartupEventArgs e)
     {
+        // Force software rendering — overlay is lightweight, avoids GPU starvation by games
+        System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
+
         var config = AppConfig.Load();
 
         var analyzer = new DirectionAnalyzer(config.IntensityThreshold, config.MaxExpectedPan);

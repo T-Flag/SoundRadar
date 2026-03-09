@@ -6,7 +6,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using SoundRadar.Analysis;
@@ -43,11 +42,20 @@ public partial class OverlayWindow : Window
 
     // --- Compact dot mode ---
     private const double DotRadius = 10.0;
-    private const double DotGlowMin = 8.0;
-    private const double DotGlowMax = 25.0;
     private const double RadarRingOpacity = 0.20;
     private const double RadarRingThickness = 1.5;
     private const double CompassTickLength = 10.0;
+
+    // --- Diamond mode ---
+    private const double DiamondSize = 14.0;
+    private const double DiamondOutline = 2.0;
+    private const int DiamondTrailCount = 3;
+    private const double DiamondTrailSpacing = 14.0;
+    private const double PulseIntensityThreshold = 0.7;
+    private const double PulseAmplitude = 0.3;
+
+    // Display modes
+    private static readonly string[] DisplayModeNames = { "Arcs", "Dots", "Diamonds" };
 
     // --- Spectrum display ---
     private const double SpectrumBarWidth = 20;
@@ -131,7 +139,7 @@ public partial class OverlayWindow : Window
     private bool _spectrumVisible = false;
     private bool _debugVisible = true;
     private bool _isSurroundMode = false;
-    private bool _compactMode = true;
+    private int _displayMode = 2; // 0=Arcs, 1=Dots, 2=Diamonds
     private IntPtr _hwnd;
     private BandAnalysis[]? _currentBands;
     private DebugData? _debugData;
@@ -169,7 +177,7 @@ public partial class OverlayWindow : Window
 
         var topmostTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromMilliseconds(500)
+            Interval = TimeSpan.FromMilliseconds(1000)
         };
         topmostTimer.Tick += (_, _) => ForceTopmost();
         topmostTimer.Start();
@@ -310,7 +318,7 @@ public partial class OverlayWindow : Window
                     handled = true;
                     break;
                 case HOTKEY_DISPLAY_MODE:
-                    _compactMode = !_compactMode;
+                    _displayMode = (_displayMode + 1) % DisplayModeNames.Length;
                     FlashSetting("DisplayMode");
                     handled = true;
                     break;
@@ -439,12 +447,12 @@ public partial class OverlayWindow : Window
                 active.Add(evt);
         }
 
-        if (_compactMode)
+        if (_displayMode > 0) // Dots or Diamonds
         {
             DrawRadarRing(centerX, centerY, radius);
             DrawCompassTicks(centerX, centerY, radius);
         }
-        else if (_isSurroundMode)
+        else if (_isSurroundMode) // Arcs + surround
         {
             DrawCompassLabels(centerX, centerY, radius);
         }
@@ -452,10 +460,12 @@ public partial class OverlayWindow : Window
         foreach (var evt in active)
         {
             _events.Enqueue(evt);
-            if (_compactMode)
-                DrawRadarDot(evt, centerX, centerY, radius);
-            else
-                DrawRadarArc(evt, centerX, centerY, radius);
+            switch (_displayMode)
+            {
+                case 1: DrawRadarDot(evt, centerX, centerY, radius); break;
+                case 2: DrawRadarDiamond(evt, centerX, centerY, radius); break;
+                default: DrawRadarArc(evt, centerX, centerY, radius); break;
+            }
         }
 
         if (_debugVisible)
@@ -560,28 +570,34 @@ public partial class OverlayWindow : Window
 
         var color = Color.FromArgb(opacity, baseColor.R, baseColor.G, baseColor.B);
 
+        // Soft glow layer (larger, semi-transparent — no BlurEffect for software rendering)
+        double glowOuter = outerRadius + 4;
+        double glowInner = innerRadius - 4;
+        double glowStartRad = (angleDeg - 90 - halfSpan - 3) * Math.PI / 180;
+        double glowEndRad = (angleDeg - 90 + halfSpan + 3) * Math.PI / 180;
+        var gos = new Point(cx + glowOuter * Math.Cos(glowStartRad), cy + glowOuter * Math.Sin(glowStartRad));
+        var goe = new Point(cx + glowOuter * Math.Cos(glowEndRad), cy + glowOuter * Math.Sin(glowEndRad));
+        var gie = new Point(cx + glowInner * Math.Cos(glowEndRad), cy + glowInner * Math.Sin(glowEndRad));
+        var gis = new Point(cx + glowInner * Math.Cos(glowStartRad), cy + glowInner * Math.Sin(glowStartRad));
+
+        var glowFigure = new PathFigure { StartPoint = gos, IsClosed = true, IsFilled = true };
+        glowFigure.Segments.Add(new ArcSegment(goe, new Size(glowOuter, glowOuter), 0, false, SweepDirection.Clockwise, true));
+        glowFigure.Segments.Add(new LineSegment(gie, true));
+        glowFigure.Segments.Add(new ArcSegment(gis, new Size(glowInner, glowInner), 0, false, SweepDirection.Counterclockwise, true));
+
+        var glowColor = Color.FromArgb((byte)(opacity * 0.35), baseColor.R, baseColor.G, baseColor.B);
         var glowPath = new Path
         {
-            Data = new PathGeometry(new[] { figure }),
-            Fill = new SolidColorBrush(color),
-            Effect = new BlurEffect
-            {
-                Radius = GlowRadius * decay,
-                KernelType = KernelType.Gaussian
-            }
+            Data = new PathGeometry(new[] { glowFigure }),
+            Fill = new SolidColorBrush(glowColor),
         };
         OverlayCanvas.Children.Add(glowPath);
 
-        var sharpFigure = new PathFigure { StartPoint = outerStart, IsClosed = true, IsFilled = true };
-        sharpFigure.Segments.Add(new ArcSegment(outerEnd, new Size(outerRadius, outerRadius), 0, false, SweepDirection.Clockwise, true));
-        sharpFigure.Segments.Add(new LineSegment(innerEnd, true));
-        sharpFigure.Segments.Add(new ArcSegment(innerStart, new Size(innerRadius, innerRadius), 0, false, SweepDirection.Counterclockwise, true));
-
-        var sharpColor = Color.FromArgb((byte)(opacity * 0.85), baseColor.R, baseColor.G, baseColor.B);
+        // Sharp arc
         var sharpPath = new Path
         {
-            Data = new PathGeometry(new[] { sharpFigure }),
-            Fill = new SolidColorBrush(sharpColor),
+            Data = new PathGeometry(new[] { figure }),
+            Fill = new SolidColorBrush(color),
         };
         OverlayCanvas.Children.Add(sharpPath);
     }
@@ -617,38 +633,52 @@ public partial class OverlayWindow : Window
         double dotY = cy + radius * Math.Sin(angleRad);
 
         double dotSize = DotRadius * (0.6 + 0.4 * evt.Intensity) * decay;
-        double glowSize = DotGlowMin + (DotGlowMax - DotGlowMin) * evt.Intensity * decay;
 
         byte opacity = (byte)(255 * Math.Clamp(rawOpacity, 0, 1));
-        var color = Color.FromArgb(opacity, baseColor.R, baseColor.G, baseColor.B);
 
-        // Glow layer
+        // Soft glow (larger semi-transparent circle — no BlurEffect)
+        byte glowAlpha = (byte)(opacity * 0.3);
+        double glowDiameter = dotSize * 4;
         var glow = new Ellipse
         {
-            Width = dotSize * 2,
-            Height = dotSize * 2,
-            Fill = new SolidColorBrush(color),
-            Effect = new BlurEffect { Radius = glowSize, KernelType = KernelType.Gaussian },
+            Width = glowDiameter,
+            Height = glowDiameter,
+            Fill = new SolidColorBrush(Color.FromArgb(glowAlpha, baseColor.R, baseColor.G, baseColor.B)),
         };
-        Canvas.SetLeft(glow, dotX - dotSize);
-        Canvas.SetTop(glow, dotY - dotSize);
+        Canvas.SetLeft(glow, dotX - glowDiameter / 2);
+        Canvas.SetTop(glow, dotY - glowDiameter / 2);
         OverlayCanvas.Children.Add(glow);
 
-        // Sharp core
-        byte coreOpacity = (byte)(opacity * 0.9);
+        // Sharp core with black outline for contrast
         var core = new Ellipse
         {
-            Width = dotSize * 1.4,
-            Height = dotSize * 1.4,
-            Fill = new SolidColorBrush(Color.FromArgb(coreOpacity, baseColor.R, baseColor.G, baseColor.B)),
+            Width = dotSize * 1.6,
+            Height = dotSize * 1.6,
+            Fill = new SolidColorBrush(Color.FromArgb(opacity, baseColor.R, baseColor.G, baseColor.B)),
+            Stroke = new SolidColorBrush(Color.FromArgb((byte)(opacity * 0.5), 0, 0, 0)),
+            StrokeThickness = 1.5,
         };
-        Canvas.SetLeft(core, dotX - dotSize * 0.7);
-        Canvas.SetTop(core, dotY - dotSize * 0.7);
+        Canvas.SetLeft(core, dotX - dotSize * 0.8);
+        Canvas.SetTop(core, dotY - dotSize * 0.8);
         OverlayCanvas.Children.Add(core);
     }
 
     private void DrawRadarRing(double cx, double cy, double radius)
     {
+        // Black outline ring (behind, slightly thicker)
+        var blackRing = new Ellipse
+        {
+            Width = radius * 2,
+            Height = radius * 2,
+            Stroke = new SolidColorBrush(Color.FromArgb(60, 0, 0, 0)),
+            StrokeThickness = RadarRingThickness + 3,
+            Fill = Brushes.Transparent,
+        };
+        Canvas.SetLeft(blackRing, cx - radius);
+        Canvas.SetTop(blackRing, cy - radius);
+        OverlayCanvas.Children.Add(blackRing);
+
+        // White ring on top
         byte alpha = (byte)(255 * RadarRingOpacity);
         var ring = new Ellipse
         {
@@ -686,6 +716,75 @@ public partial class OverlayWindow : Window
             };
             OverlayCanvas.Children.Add(tick);
         }
+    }
+
+    private void DrawRadarDiamond(SoundEvent evt, double cx, double cy, double radius)
+    {
+        float decay = evt.GetDecayFactor();
+        if (decay <= 0) return;
+
+        Color baseColor;
+        double angleDeg;
+
+        if (evt.IsSurround)
+        {
+            angleDeg = evt.Angle;
+            baseColor = AngleToColor(evt.Angle);
+        }
+        else
+        {
+            bool isLeft = evt.Pan < -CenterPanThreshold;
+            bool isRight = evt.Pan > CenterPanThreshold;
+            baseColor = isLeft ? ColorLeft : isRight ? ColorRight : ColorCenter;
+            angleDeg = DirectionAnalyzer.PanToAngle(evt.Pan);
+        }
+
+        double angleRad = (angleDeg - 90) * Math.PI / 180;
+        double cosA = Math.Cos(angleRad);
+        double sinA = Math.Sin(angleRad);
+
+        // Pulse for strong sounds
+        double pulse = 1.0;
+        if (evt.Intensity > PulseIntensityThreshold)
+        {
+            double ms = (DateTime.UtcNow - evt.Timestamp).TotalMilliseconds;
+            pulse = 1.0 + PulseAmplitude * Math.Abs(Math.Sin(ms * Math.PI / 200));
+        }
+
+        double mainSize = DiamondSize * (0.7 + 0.3 * evt.Intensity) * decay * pulse;
+
+        // Trail diamonds (behind, toward center)
+        for (int i = DiamondTrailCount; i >= 1; i--)
+        {
+            double trailR = radius - i * DiamondTrailSpacing;
+            double trailSize = mainSize * (1.0 - i * 0.2);
+            byte trailAlpha = (byte)(255 * decay * (1.0 - i * 0.25));
+            double trailX = cx + trailR * cosA;
+            double trailY = cy + trailR * sinA;
+            var trailColor = Color.FromArgb(trailAlpha, baseColor.R, baseColor.G, baseColor.B);
+            AddDiamond(trailX, trailY, trailSize, trailColor, 1.0);
+        }
+
+        // Main diamond — full opacity, black outline for contrast
+        AddDiamond(cx + radius * cosA, cy + radius * sinA, mainSize, baseColor, DiamondOutline);
+    }
+
+    private void AddDiamond(double x, double y, double size, Color fill, double outlineThickness)
+    {
+        var diamond = new Polygon
+        {
+            Points = new PointCollection
+            {
+                new Point(x, y - size),
+                new Point(x + size * 0.7, y),
+                new Point(x, y + size),
+                new Point(x - size * 0.7, y),
+            },
+            Fill = new SolidColorBrush(fill),
+            Stroke = Brushes.Black,
+            StrokeThickness = outlineThickness,
+        };
+        OverlayCanvas.Children.Add(diamond);
     }
 
     private void DrawArcLabel(SoundEvent evt, double cx, double cy, double radius)
@@ -802,7 +901,7 @@ public partial class OverlayWindow : Window
         sb.AppendLine($"    Trigger factor:  {triggerFactor:F1}");
         sb.AppendLine($"{(hlAdapt ? ">>>" : "   ")} Adapt time:     {adaptTime:F1}s  [Ctrl+Shift+A]");
         sb.AppendLine($"{(hlNoise ? ">>>" : "   ")} Noise floor:    {noiseFloor:F0}dB  [Ctrl+Shift+N]");
-        sb.AppendLine($"{(hlMode ? ">>>" : "   ")} Display mode:   {(_compactMode ? "Dots" : "Arcs")}  [Ctrl+Shift+V]");
+        sb.AppendLine($"{(hlMode ? ">>>" : "   ")} Display mode:   {DisplayModeNames[_displayMode]}  [Ctrl+Shift+V]");
         sb.AppendLine();
         sb.AppendLine("-- Performance --");
         sb.AppendLine($"Frame time:        {_lastFrameTimeMs:F1}ms");
@@ -871,13 +970,12 @@ public partial class OverlayWindow : Window
 
     private void DrawControlsPanel(double width, double height)
     {
-        string modeStr = _compactMode ? "Dots" : "Arcs";
         string controlsText =
             "=== CONTROLS ===\n" +
             "Ctrl+Shift+D      Toggle debug\n" +
             "Ctrl+Shift+S      Toggle spectrum\n" +
             "Ctrl+Shift+O      Toggle overlay\n" +
-            $"Ctrl+Shift+V      Display mode [{modeStr}]\n" +
+            $"Ctrl+Shift+V      Display mode [{DisplayModeNames[_displayMode]}]\n" +
             "Ctrl+Shift+Up     Sensitivity +\n" +
             "Ctrl+Shift+Down   Sensitivity -\n" +
             "Ctrl+Shift+Right  MaxPan +0.05\n" +
