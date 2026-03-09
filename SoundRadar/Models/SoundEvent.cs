@@ -3,6 +3,8 @@ namespace SoundRadar.Models;
 public class SoundEvent
 {
     public float Pan { get; init; }
+    public float Angle { get; init; }
+    public bool IsSurround { get; init; }
     public float Intensity { get; init; }
     public float DominantFrequency { get; init; }
     public string? DominantBand { get; init; }

@@ -19,6 +19,17 @@ public class FrequencyBandsConfig
     public double CeilingDb { get; set; } = 0;
 }
 
+public class SurroundConfig
+{
+    public bool Enabled { get; set; } = true;
+    public Dictionary<string, float> ChannelAngles { get; set; } = new()
+    {
+        ["FL"] = -45, ["FR"] = 45, ["FC"] = 0,
+        ["SL"] = -90, ["SR"] = 90,
+        ["RL"] = -135, ["RR"] = 135,
+    };
+}
+
 public class AppConfig
 {
     public float IntensityThreshold { get; set; } = 0.010f;
@@ -26,6 +37,7 @@ public class AppConfig
     public bool OverlayVisible { get; set; } = true;
     public AdaptiveThresholdConfig AdaptiveThreshold { get; set; } = new();
     public FrequencyBandsConfig FrequencyBands { get; set; } = new();
+    public SurroundConfig Surround { get; set; } = new();
     public bool SpectrumDisplayVisible { get; set; } = false;
     public bool DebugVisible { get; set; } = true;
 

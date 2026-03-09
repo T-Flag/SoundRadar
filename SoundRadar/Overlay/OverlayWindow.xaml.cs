@@ -20,6 +20,7 @@ public partial class OverlayWindow : Window
     private static readonly Color ColorLeft = (Color)ColorConverter.ConvertFromString("#00D4FF");
     private static readonly Color ColorRight = (Color)ColorConverter.ConvertFromString("#FF8C00");
     private static readonly Color ColorCenter = Colors.White;
+    private static readonly Color ColorRear = (Color)ColorConverter.ConvertFromString("#FF00FF");
     private const float CenterPanThreshold = 0.1f;
 
     // --- Spectrum band colors ---
@@ -106,6 +107,7 @@ public partial class OverlayWindow : Window
     private bool _overlayVisible = true;
     private bool _spectrumVisible = false;
     private bool _debugVisible = true;
+    private bool _isSurroundMode = false;
     private IntPtr _hwnd;
     private BandAnalysis[]? _currentBands;
     private DebugData? _debugData;
@@ -158,6 +160,11 @@ public partial class OverlayWindow : Window
         _config = config;
         _spectrumVisible = config.SpectrumDisplayVisible;
         _debugVisible = config.DebugVisible;
+    }
+
+    public void SetSurroundMode(bool surround)
+    {
+        _isSurroundMode = surround;
     }
 
     public void SetOverlayVisible(bool visible)
@@ -339,6 +346,8 @@ public partial class OverlayWindow : Window
                 Timestamp = soundEvent.Timestamp,
                 Band = soundEvent.DominantBand,
                 Pan = soundEvent.Pan,
+                Angle = soundEvent.Angle,
+                IsSurround = soundEvent.IsSurround,
                 Intensity = soundEvent.Intensity,
             });
             while (_eventLog.Count > MaxEventLogEntries)
@@ -380,6 +389,10 @@ public partial class OverlayWindow : Window
                 active.Add(evt);
         }
 
+        // Draw compass labels in surround mode
+        if (_isSurroundMode)
+            DrawCompassLabels(centerX, centerY, radius);
+
         foreach (var evt in active)
         {
             _events.Enqueue(evt);
@@ -409,25 +422,66 @@ public partial class OverlayWindow : Window
         }
     }
 
+    private void DrawCompassLabels(double cx, double cy, double radius)
+    {
+        // F(front) at top, B(back) at bottom, L at left, R at right
+        var labels = new[] { ("F", 0.0), ("R", 90.0), ("B", 180.0), ("L", -90.0) };
+        double labelRadius = radius + 15;
+        byte alpha = 90;
+
+        foreach (var (text, angleDeg) in labels)
+        {
+            double angleRad = (angleDeg - 90) * Math.PI / 180;
+            double lx = cx + labelRadius * Math.Cos(angleRad);
+            double ly = cy + labelRadius * Math.Sin(angleRad);
+
+            var label = new TextBlock
+            {
+                Text = text,
+                FontSize = 14,
+                FontWeight = FontWeights.Bold,
+                FontFamily = MonoFont,
+                Foreground = new SolidColorBrush(Color.FromArgb(alpha, 255, 255, 255)),
+            };
+            Canvas.SetLeft(label, lx - 5);
+            Canvas.SetTop(label, ly - 9);
+            OverlayCanvas.Children.Add(label);
+        }
+    }
+
     private void DrawRadarArc(SoundEvent evt, double cx, double cy, double radius)
     {
         float decay = evt.GetDecayFactor();
         if (decay <= 0) return;
 
-        bool isLeft = evt.Pan < -CenterPanThreshold;
-        bool isRight = evt.Pan > CenterPanThreshold;
-        Color baseColor = isLeft ? ColorLeft : isRight ? ColorRight : ColorCenter;
+        Color baseColor;
+        double angleDeg;
+
+        if (evt.IsSurround)
+        {
+            // Surround mode: use angle directly, color from angle
+            angleDeg = evt.Angle;
+            baseColor = AngleToColor(evt.Angle);
+        }
+        else
+        {
+            // Stereo mode: use PanToAngle, color from pan direction
+            bool isLeft = evt.Pan < -CenterPanThreshold;
+            bool isRight = evt.Pan > CenterPanThreshold;
+            baseColor = isLeft ? ColorLeft : isRight ? ColorRight : ColorCenter;
+            angleDeg = DirectionAnalyzer.PanToAngle(evt.Pan);
+        }
 
         double rawOpacity = MinOpacity + (MaxOpacity - MinOpacity) * Math.Min(1.0, evt.Intensity * 2.0);
         rawOpacity *= decay;
-        if (!isLeft && !isRight) rawOpacity *= CenterOpacityMultiplier;
+        if (!evt.IsSurround && Math.Abs(evt.Pan) <= CenterPanThreshold)
+            rawOpacity *= CenterOpacityMultiplier;
         byte opacity = (byte)(255 * Math.Clamp(rawOpacity, 0, 1));
 
         double thicknessFrac = ArcMinThickness + (ArcMaxThickness - ArcMinThickness) * evt.Intensity * decay;
         double outerRadius = radius;
         double innerRadius = radius * (1.0 - thicknessFrac);
 
-        double angleDeg = DirectionAnalyzer.PanToAngle(evt.Pan);
         double halfSpan = ArcSpanDegrees / 2;
         double startAngleDeg = angleDeg - 90 - halfSpan;
         double endAngleDeg = angleDeg - 90 + halfSpan;
@@ -478,7 +532,7 @@ public partial class OverlayWindow : Window
         float decay = evt.GetDecayFactor();
         if (decay <= 0.1f) return;
 
-        double angleDeg = DirectionAnalyzer.PanToAngle(evt.Pan);
+        double angleDeg = evt.IsSurround ? evt.Angle : DirectionAnalyzer.PanToAngle(evt.Pan);
         double angleRad = (angleDeg - 90) * Math.PI / 180;
         double labelRadius = radius + 25;
         double lx = cx + labelRadius * Math.Cos(angleRad);
@@ -503,8 +557,12 @@ public partial class OverlayWindow : Window
     {
         if (_debugData == null) return;
 
-        float rawPan = _debugData.RawPan;
-        double rawAngleDeg = DirectionAnalyzer.PanToAngle(rawPan);
+        double rawAngleDeg;
+        if (_isSurroundMode)
+            rawAngleDeg = _debugData.SurroundAngle;
+        else
+            rawAngleDeg = DirectionAnalyzer.PanToAngle(_debugData.RawPan);
+
         double rawAngleRad = (rawAngleDeg - 90) * Math.PI / 180;
 
         double innerR = radius * 0.85;
@@ -552,6 +610,22 @@ public partial class OverlayWindow : Window
         sb.AppendLine("=== SOUND RADAR DEBUG ===");
         sb.AppendLine($"Audio Capture: {captureStatus} | {sampleRate} Hz | Buffer: {bufferSize}");
         sb.AppendLine();
+
+        // Surround mode section
+        if (_isSurroundMode && data != null)
+        {
+            sb.AppendLine("-- Surround Mode --");
+            string modeStr = $"7.1 ({data.ChannelCount} channels)";
+            string angleStr = data.SurroundAngle >= 0 ? $"+{data.SurroundAngle:F1}°" : $"{data.SurroundAngle:F1}°";
+            string dirStr = AngleToDirectionName(data.SurroundAngle);
+            sb.AppendLine($"Mode:             {modeStr}");
+            sb.AppendLine($"Angle:            {angleStr}  ({dirStr})");
+            sb.AppendLine();
+            sb.AppendLine("-- Channel Energy --");
+            sb.Append(BuildChannelEnergySection(data.ChannelEnergies));
+            sb.AppendLine();
+        }
+
         sb.AppendLine("-- Raw Signal --");
         sb.AppendLine($"Pan (raw):        {rawPanStr}");
         sb.AppendLine($"Pan (normalized): {normPanStr}");
@@ -577,6 +651,32 @@ public partial class OverlayWindow : Window
         Canvas.SetLeft(panel, 15);
         Canvas.SetTop(panel, 15);
         OverlayCanvas.Children.Add(panel);
+    }
+
+    private static string BuildChannelEnergySection(float[] energies)
+    {
+        if (energies.Length < 8)
+            return "  (no data)\n";
+
+        var sb = new StringBuilder();
+        // FL(0), FR(1) on same line; SL(6), SR(7); RL(4), RR(5); FC(2), LFE(3)
+        sb.AppendLine(FormatChannelPair("FL", energies[0], "FR", energies[1]));
+        sb.AppendLine(FormatChannelPair("SL", energies[6], "SR", energies[7]));
+        sb.AppendLine(FormatChannelPair("RL", energies[4], "RR", energies[5]));
+        sb.AppendLine(FormatChannelPair("FC", energies[2], "LFE", energies[3]));
+        return sb.ToString();
+    }
+
+    private static string FormatChannelPair(string name1, float energy1, string name2, float energy2)
+    {
+        return $"{name1,-3}: {EnergyBar(energy1)}  {energy1:F2}   {name2,-3}: {EnergyBar(energy2)}  {energy2:F2}";
+    }
+
+    private static string EnergyBar(float energy, int width = 8)
+    {
+        int filled = (int)(Math.Clamp(energy, 0, 1) * width);
+        int empty = width - filled;
+        return new string('\u2588', filled) + new string('\u2591', empty);
     }
 
     private string BuildBandsSection()
@@ -666,6 +766,47 @@ public partial class OverlayWindow : Window
     {
         string format = decimals == 2 ? "F2" : "F3";
         return value >= 0 ? $"+{value.ToString(format)}" : value.ToString(format);
+    }
+
+    /// <summary>
+    /// Maps a surround angle (-180..+180) to a color.
+    /// Transition: cyan(left/-90) -> white(front/0) -> orange(right/+90) -> magenta(back/180) -> cyan
+    /// </summary>
+    private static Color AngleToColor(float angleDeg)
+    {
+        // Normalize to [0, 360)
+        float a = ((angleDeg % 360) + 360) % 360;
+
+        // Sectors: 0=front, 90=right, 180=rear, 270=left
+        if (a < 90)
+            return LerpColor(ColorCenter, ColorRight, (float)(a / 90));
+        if (a < 180)
+            return LerpColor(ColorRight, ColorRear, (float)((a - 90) / 90));
+        if (a < 270)
+            return LerpColor(ColorRear, ColorLeft, (float)((a - 180) / 90));
+        return LerpColor(ColorLeft, ColorCenter, (float)((a - 270) / 90));
+    }
+
+    private static Color LerpColor(Color a, Color b, float t)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        return Color.FromRgb(
+            (byte)(a.R + (b.R - a.R) * t),
+            (byte)(a.G + (b.G - a.G) * t),
+            (byte)(a.B + (b.B - a.B) * t));
+    }
+
+    private static string AngleToDirectionName(float angle)
+    {
+        float a = ((angle % 360) + 360) % 360;
+        if (a < 22.5 || a >= 337.5) return "Front";
+        if (a < 67.5) return "Front-Right";
+        if (a < 112.5) return "Right";
+        if (a < 157.5) return "Rear-Right";
+        if (a < 202.5) return "Rear";
+        if (a < 247.5) return "Rear-Left";
+        if (a < 292.5) return "Left";
+        return "Front-Left";
     }
 
     private void DrawSpectrumBars(double width, double height)

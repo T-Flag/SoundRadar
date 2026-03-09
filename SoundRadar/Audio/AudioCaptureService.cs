@@ -9,10 +9,12 @@ public class AudioCaptureService : IDisposable
     private bool _disposed;
 
     public event Action<float[], int>? AudioDataAvailable;
+    public int ChannelCount { get; private set; } = 2;
 
     public void Start()
     {
         _capture = new WasapiLoopbackCapture();
+        ChannelCount = _capture.WaveFormat.Channels;
         _capture.DataAvailable += OnDataAvailable;
         _capture.StartRecording();
     }
@@ -44,20 +46,9 @@ public class AudioCaptureService : IDisposable
             }
         }
 
-        // If more than 2 channels, downmix to stereo
-        if (waveFormat.Channels > 2)
-        {
-            int channels = waveFormat.Channels;
-            int frames = sampleCount / channels;
-            var stereo = new float[frames * 2];
-            for (int i = 0; i < frames; i++)
-            {
-                stereo[i * 2] = samples[i * channels];         // Left
-                stereo[i * 2 + 1] = samples[i * channels + 1]; // Right
-            }
-            samples = stereo;
-        }
-
+        // Expose raw multichannel buffer — ChannelCount tells consumers the layout
+        // For stereo (2ch): interleaved [L, R, L, R, ...]
+        // For 7.1 (8ch): interleaved [FL, FR, FC, LFE, RL, RR, SL, SR, ...]
         AudioDataAvailable?.Invoke(samples, waveFormat.SampleRate);
     }
 
