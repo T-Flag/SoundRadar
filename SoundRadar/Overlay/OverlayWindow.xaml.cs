@@ -41,6 +41,14 @@ public partial class OverlayWindow : Window
     private const double ArcMinThickness = 0.04;
     private const double GlowRadius = 18.0;
 
+    // --- Compact dot mode ---
+    private const double DotRadius = 10.0;
+    private const double DotGlowMin = 8.0;
+    private const double DotGlowMax = 25.0;
+    private const double RadarRingOpacity = 0.20;
+    private const double RadarRingThickness = 1.5;
+    private const double CompassTickLength = 10.0;
+
     // --- Spectrum display ---
     private const double SpectrumBarWidth = 20;
     private const double SpectrumBarMaxHeight = 80;
@@ -77,6 +85,7 @@ public partial class OverlayWindow : Window
     private const int HOTKEY_DEBUG = 8;
     private const int HOTKEY_ADAPT_TIME = 9;
     private const int HOTKEY_NOISE_FLOOR = 10;
+    private const int HOTKEY_DISPLAY_MODE = 11;
     private const uint MOD_CTRL_SHIFT = 0x0002 | 0x0004;
     private const uint VK_O = 0x4F;
     private const uint VK_UP = 0x26;
@@ -88,6 +97,7 @@ public partial class OverlayWindow : Window
     private const uint VK_D = 0x44;
     private const uint VK_A = 0x41;
     private const uint VK_N = 0x4E;
+    private const uint VK_V = 0x56;
 
     // Cycle values for hotkeys
     private static readonly double[] AdaptTimeValues = { 0.5, 1.5, 3.0 };
@@ -121,6 +131,7 @@ public partial class OverlayWindow : Window
     private bool _spectrumVisible = false;
     private bool _debugVisible = true;
     private bool _isSurroundMode = false;
+    private bool _compactMode = true;
     private IntPtr _hwnd;
     private BandAnalysis[]? _currentBands;
     private DebugData? _debugData;
@@ -146,7 +157,10 @@ public partial class OverlayWindow : Window
         Loaded += OnLoaded;
         Deactivated += (_, _) => ForceTopmost();
 
-        _renderTimer = new DispatcherTimer
+        // Force WPF to render at full speed even when not focused
+        CompositionTarget.Rendering += (_, _) => { };
+
+        _renderTimer = new DispatcherTimer(DispatcherPriority.Send)
         {
             Interval = TimeSpan.FromMilliseconds(16)
         };
@@ -155,7 +169,7 @@ public partial class OverlayWindow : Window
 
         var topmostTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromMilliseconds(100)
+            Interval = TimeSpan.FromMilliseconds(500)
         };
         topmostTimer.Tick += (_, _) => ForceTopmost();
         topmostTimer.Start();
@@ -222,6 +236,7 @@ public partial class OverlayWindow : Window
         RegisterHotKey(_hwnd, HOTKEY_DEBUG, MOD_CTRL_SHIFT, VK_D);
         RegisterHotKey(_hwnd, HOTKEY_ADAPT_TIME, MOD_CTRL_SHIFT, VK_A);
         RegisterHotKey(_hwnd, HOTKEY_NOISE_FLOOR, MOD_CTRL_SHIFT, VK_N);
+        RegisterHotKey(_hwnd, HOTKEY_DISPLAY_MODE, MOD_CTRL_SHIFT, VK_V);
 
         var source = HwndSource.FromHwnd(_hwnd);
         source?.AddHook(WndProc);
@@ -294,6 +309,11 @@ public partial class OverlayWindow : Window
                     CycleNoiseFloor();
                     handled = true;
                     break;
+                case HOTKEY_DISPLAY_MODE:
+                    _compactMode = !_compactMode;
+                    FlashSetting("DisplayMode");
+                    handled = true;
+                    break;
                 case HOTKEY_QUIT:
                     SaveConfig();
                     Application.Current.Shutdown();
@@ -342,6 +362,7 @@ public partial class OverlayWindow : Window
             UnregisterHotKey(_hwnd, HOTKEY_DEBUG);
             UnregisterHotKey(_hwnd, HOTKEY_ADAPT_TIME);
             UnregisterHotKey(_hwnd, HOTKEY_NOISE_FLOOR);
+            UnregisterHotKey(_hwnd, HOTKEY_DISPLAY_MODE);
         }
         base.OnClosed(e);
     }
@@ -418,14 +439,23 @@ public partial class OverlayWindow : Window
                 active.Add(evt);
         }
 
-        // Draw compass labels in surround mode
-        if (_isSurroundMode)
+        if (_compactMode)
+        {
+            DrawRadarRing(centerX, centerY, radius);
+            DrawCompassTicks(centerX, centerY, radius);
+        }
+        else if (_isSurroundMode)
+        {
             DrawCompassLabels(centerX, centerY, radius);
+        }
 
         foreach (var evt in active)
         {
             _events.Enqueue(evt);
-            DrawRadarArc(evt, centerX, centerY, radius);
+            if (_compactMode)
+                DrawRadarDot(evt, centerX, centerY, radius);
+            else
+                DrawRadarArc(evt, centerX, centerY, radius);
         }
 
         if (_debugVisible)
@@ -556,6 +586,108 @@ public partial class OverlayWindow : Window
         OverlayCanvas.Children.Add(sharpPath);
     }
 
+    private void DrawRadarDot(SoundEvent evt, double cx, double cy, double radius)
+    {
+        float decay = evt.GetDecayFactor();
+        if (decay <= 0) return;
+
+        Color baseColor;
+        double angleDeg;
+
+        if (evt.IsSurround)
+        {
+            angleDeg = evt.Angle;
+            baseColor = AngleToColor(evt.Angle);
+        }
+        else
+        {
+            bool isLeft = evt.Pan < -CenterPanThreshold;
+            bool isRight = evt.Pan > CenterPanThreshold;
+            baseColor = isLeft ? ColorLeft : isRight ? ColorRight : ColorCenter;
+            angleDeg = DirectionAnalyzer.PanToAngle(evt.Pan);
+        }
+
+        double rawOpacity = MinOpacity + (MaxOpacity - MinOpacity) * Math.Min(1.0, evt.Intensity * 2.0);
+        rawOpacity *= decay;
+        if (!evt.IsSurround && Math.Abs(evt.Pan) <= CenterPanThreshold)
+            rawOpacity *= CenterOpacityMultiplier;
+
+        double angleRad = (angleDeg - 90) * Math.PI / 180;
+        double dotX = cx + radius * Math.Cos(angleRad);
+        double dotY = cy + radius * Math.Sin(angleRad);
+
+        double dotSize = DotRadius * (0.6 + 0.4 * evt.Intensity) * decay;
+        double glowSize = DotGlowMin + (DotGlowMax - DotGlowMin) * evt.Intensity * decay;
+
+        byte opacity = (byte)(255 * Math.Clamp(rawOpacity, 0, 1));
+        var color = Color.FromArgb(opacity, baseColor.R, baseColor.G, baseColor.B);
+
+        // Glow layer
+        var glow = new Ellipse
+        {
+            Width = dotSize * 2,
+            Height = dotSize * 2,
+            Fill = new SolidColorBrush(color),
+            Effect = new BlurEffect { Radius = glowSize, KernelType = KernelType.Gaussian },
+        };
+        Canvas.SetLeft(glow, dotX - dotSize);
+        Canvas.SetTop(glow, dotY - dotSize);
+        OverlayCanvas.Children.Add(glow);
+
+        // Sharp core
+        byte coreOpacity = (byte)(opacity * 0.9);
+        var core = new Ellipse
+        {
+            Width = dotSize * 1.4,
+            Height = dotSize * 1.4,
+            Fill = new SolidColorBrush(Color.FromArgb(coreOpacity, baseColor.R, baseColor.G, baseColor.B)),
+        };
+        Canvas.SetLeft(core, dotX - dotSize * 0.7);
+        Canvas.SetTop(core, dotY - dotSize * 0.7);
+        OverlayCanvas.Children.Add(core);
+    }
+
+    private void DrawRadarRing(double cx, double cy, double radius)
+    {
+        byte alpha = (byte)(255 * RadarRingOpacity);
+        var ring = new Ellipse
+        {
+            Width = radius * 2,
+            Height = radius * 2,
+            Stroke = new SolidColorBrush(Color.FromArgb(alpha, 255, 255, 255)),
+            StrokeThickness = RadarRingThickness,
+            Fill = Brushes.Transparent,
+        };
+        Canvas.SetLeft(ring, cx - radius);
+        Canvas.SetTop(ring, cy - radius);
+        OverlayCanvas.Children.Add(ring);
+    }
+
+    private void DrawCompassTicks(double cx, double cy, double radius)
+    {
+        var directions = new[] { 0.0, 90.0, 180.0, -90.0 };
+        byte alpha = 80;
+        var stroke = new SolidColorBrush(Color.FromArgb(alpha, 255, 255, 255));
+
+        foreach (double angleDeg in directions)
+        {
+            double angleRad = (angleDeg - 90) * Math.PI / 180;
+            double innerR = radius - CompassTickLength / 2;
+            double outerR = radius + CompassTickLength / 2;
+
+            var tick = new Line
+            {
+                X1 = cx + innerR * Math.Cos(angleRad),
+                Y1 = cy + innerR * Math.Sin(angleRad),
+                X2 = cx + outerR * Math.Cos(angleRad),
+                Y2 = cy + outerR * Math.Sin(angleRad),
+                Stroke = stroke,
+                StrokeThickness = 1.5,
+            };
+            OverlayCanvas.Children.Add(tick);
+        }
+    }
+
     private void DrawArcLabel(SoundEvent evt, double cx, double cy, double radius)
     {
         float decay = evt.GetDecayFactor();
@@ -632,6 +764,7 @@ public partial class OverlayWindow : Window
         bool hlPan = _highlightSetting == "MaxExpectedPan";
         bool hlAdapt = _highlightSetting == "AdaptTime";
         bool hlNoise = _highlightSetting == "NoiseFloor";
+        bool hlMode = _highlightSetting == "DisplayMode";
         string sensVal = _analyzer != null ? $"{_analyzer.IntensityThreshold:F3}" : "0.010";
         string panVal = _analyzer != null ? $"{_analyzer.MaxExpectedPan:F2}" : "0.25";
 
@@ -669,6 +802,7 @@ public partial class OverlayWindow : Window
         sb.AppendLine($"    Trigger factor:  {triggerFactor:F1}");
         sb.AppendLine($"{(hlAdapt ? ">>>" : "   ")} Adapt time:     {adaptTime:F1}s  [Ctrl+Shift+A]");
         sb.AppendLine($"{(hlNoise ? ">>>" : "   ")} Noise floor:    {noiseFloor:F0}dB  [Ctrl+Shift+N]");
+        sb.AppendLine($"{(hlMode ? ">>>" : "   ")} Display mode:   {(_compactMode ? "Dots" : "Arcs")}  [Ctrl+Shift+V]");
         sb.AppendLine();
         sb.AppendLine("-- Performance --");
         sb.AppendLine($"Frame time:        {_lastFrameTimeMs:F1}ms");
@@ -737,11 +871,13 @@ public partial class OverlayWindow : Window
 
     private void DrawControlsPanel(double width, double height)
     {
+        string modeStr = _compactMode ? "Dots" : "Arcs";
         string controlsText =
             "=== CONTROLS ===\n" +
             "Ctrl+Shift+D      Toggle debug\n" +
             "Ctrl+Shift+S      Toggle spectrum\n" +
             "Ctrl+Shift+O      Toggle overlay\n" +
+            $"Ctrl+Shift+V      Display mode [{modeStr}]\n" +
             "Ctrl+Shift+Up     Sensitivity +\n" +
             "Ctrl+Shift+Down   Sensitivity -\n" +
             "Ctrl+Shift+Right  MaxPan +0.05\n" +
