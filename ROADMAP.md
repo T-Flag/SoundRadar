@@ -89,7 +89,7 @@ AudioCaptureService (WASAPI Loopback)
     │
     ├──→ SpectrumAnalyzer (FFT temps réel, fenêtre Hanning)
     │       └──→ FrequencyBandFilter (4 bandes : SubBass/LowMid/Mid/HighMid)
-    │               └──→ AdaptiveThreshold (EMA 3-5s, seuil dynamique)
+    │               └──→ AdaptiveThreshold (dual-speed EMA + catch-up)
     │                       └──→ SoundEvent enrichi (pan + bande + intensité)
     │
     ├──→ DirectionAnalyzer (pan stéréo L/R, fallback)
@@ -113,7 +113,8 @@ AudioCaptureService (WASAPI Loopback)
 | Sensibilité (seuil) | 0.010 | Seuil d'intensité minimum |
 | MaxExpectedPan | 0.25 | Normalisation HRTF (pan brut / max attendu) |
 | Trigger factor | 1.5 | Facteur multiplicatif du seuil adaptatif |
-| Adaptation time | 3.0s | Temps de convergence EMA |
+| Adaptation time | 0.5s | Temps de convergence EMA |
+| Noise floor | -60 dB | Plancher de normalisation dB |
 
 ### Raccourcis clavier (globaux, compatibles TKL + Chrome)
 
@@ -124,6 +125,8 @@ AudioCaptureService (WASAPI Loopback)
 | Ctrl+Shift+S | Toggle spectre |
 | Ctrl+Shift+Up/Down | Sensibilité +/- |
 | Ctrl+Shift+Left/Right | MaxPan +/- 0.05 |
+| Ctrl+Shift+A | Cycle adapt time (0.5 / 1.5 / 3.0s) |
+| Ctrl+Shift+N | Cycle noise floor (-60 / -40 / -20 dB) |
 | Ctrl+Shift+Q | Quitter |
 
 ---
@@ -142,15 +145,23 @@ AudioCaptureService (WASAPI Loopback)
 - [x] Config persistante (config.json)
 - [x] Mode debug complet (panneau temps réel, event log, panneau contrôles)
 
-### Phase 2 — Analyse fréquentielle et filtrage 🔧 En cours
+### Phase 2 — Analyse fréquentielle et filtrage ✅
 - [x] FFT temps réel (Hanning window)
 - [x] Découpage en 4 bandes de fréquences
 - [x] Normalisation d'énergie en dB
 - [x] Pan par bande de fréquence
-- [ ] **Seuil adaptatif fonctionnel** (baseline EMA qui s'adapte au bruit ambiant)
-- [ ] Affichage spectre optionnel (Ctrl+Shift+S)
-- [ ] Jusqu'à 3 événements simultanés (bandes les plus fortes)
-- [ ] Calibrage sur Hunt: Showdown (terrain d'entraînement ou vidéos)
+- [x] Seuil adaptatif fonctionnel (dual-speed EMA avec catch-up par compteur de spikes consécutifs)
+- [x] Affichage spectre optionnel (Ctrl+Shift+S)
+- [x] Jusqu'à 3 événements simultanés (bandes les plus fortes)
+- [x] Calibrage sur Hunt: Showdown (vidéos YouTube)
+- [x] Calibrage : adaptationTime=0.5s, triggerFactor=1.5, noiseFloor=-60dB
+- [x] Raccourcis de calibrage temps réel (Ctrl+Shift+A, Ctrl+Shift+N)
+
+### Pistes d'amélioration Phase 2 (à revisiter)
+- **Filtre de lissage temporel** : exiger 3-4 frames consécutives au-dessus du seuil pour déclencher un événement, afin de filtrer les micro-pics stochastiques de la pluie
+- **Exclusion intelligente de bandes par contexte** : quand le bruit de fond est élevé sur HighMid (pluie), réduire le poids de cette bande dans le radar
+- **Profil pluie automatique** : détecter quand le bruit de fond HighMid dépasse un certain seuil pendant plus de 5 secondes et basculer automatiquement en mode "pluie" avec des seuils plus agressifs
+- Résultat actuel sous forte pluie : ~8 events actifs, 16-26 events/sec (vs 32 events et 68/sec avant optimisation)
 
 ### Phase 3 — Spatialisation 360° via 7.1 virtuel
 - [ ] Support Voicemeeter Banana comme device 7.1 virtuel
