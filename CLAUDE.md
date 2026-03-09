@@ -96,10 +96,31 @@ dotnet run --project SoundRadar
 - Auto-détection : si WASAPI device ≥ 8 canaux, mode surround activé automatiquement
 - Downmix FL+FR vers stéréo pour le pipeline FFT existant
 
+## Self-sound filter (SelfSoundFilter)
+- Filtre les sons front-center (±30° par défaut) en mode surround uniquement
+- `SelfSoundFilter.ShouldFilter(angle, isSurround, filterEnabled, filterAngle)`
+- Ne s'applique pas en mode stéréo (toujours false)
+- Toggle : `Ctrl+Shift+F`, angle configurable dans config.json
+
+## Edge flash
+- Flash directionnel sur les bords d'écran (LinearGradientBrush, 80px, 300ms fade)
+- Mapping angle → bord : haut (315°-45°), droite (45°-135°), bas (135°-225°), gauche (225°-315°)
+- Compatible software rendering (pas de BlurEffect)
+- Toggle : `Ctrl+Shift+B`
+
+## Overlay & rendu
+- Software rendering (`RenderMode.SoftwareOnly`) pour éviter la famine GPU en jeu
+- 3 modes d'affichage : Arcs (0), Dots (1), Diamonds (2, défaut) — `Ctrl+Shift+V`
+- Diamond mode : trails + pulse animation pour sons intenses (>0.7)
+- Double outline radar ring (noir + blanc) en modes Dots/Diamonds
+- `CompositionTarget.Rendering` keep-alive pour rendu à pleine vitesse même sans focus
+- TriggerFactor mutable [1.1-3.0], ajustable `Ctrl+Shift+Up/Down` ±0.1
+
 ## État du projet
 - **Phase 1 terminée** : capture audio, analyse directionnelle, overlay
 - **Phase 2 terminée** : FFT, bandes fréquentielles, seuil adaptatif, spectre, calibrage
 - **Phase 3 terminée** : support 7.1 surround, radar 360°, debug per-channel
+- **Phase 4 terminée** : UX (display modes, software rendering, trigger factor), self-sound filter, edge flash
 - 66/66 tests passent
 - Repo GitHub : https://github.com/T-Flag/SoundRadar
 
