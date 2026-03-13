@@ -55,8 +55,19 @@ public partial class OverlayWindow : Window
     private const double PulseAmplitude = 0.3;
 
     // --- Edge flash ---
-    private const double EdgeFlashDurationMs = 300.0;
-    private const double EdgeFlashWidth = 80.0;
+    private const double EdgeFlashDurationMs = 500.0;
+    private const double EdgeFlashWidth = 150.0;
+    private const double EdgeFlashWidthLoud = 200.0;
+    private const double EdgeFlashBaseOpacity = 0.7;
+    private const double EdgeFlashLoudOpacity = 0.9;
+    private const double EdgeFlashLoudThreshold = 0.5;
+    private const double EdgeFlashBorderThickness = 3.0;
+
+    // --- Edge flash colors (vivid & saturated) ---
+    private static readonly Color FlashColorLeft = (Color)ColorConverter.ConvertFromString("#00E5FF");
+    private static readonly Color FlashColorRight = (Color)ColorConverter.ConvertFromString("#FF9100");
+    private static readonly Color FlashColorCenter = Colors.White;
+    private static readonly Color FlashColorRear = (Color)ColorConverter.ConvertFromString("#FF00FF");
 
     // Display modes
     private static readonly string[] DisplayModeNames = { "Arcs", "Dots", "Diamonds" };
@@ -149,7 +160,7 @@ public partial class OverlayWindow : Window
     private bool _isSurroundMode = false;
     private int _displayMode = 2; // 0=Arcs, 1=Dots, 2=Diamonds
     private bool _selfSoundFilterEnabled = true;
-    private float _selfSoundFilterAngle = 30f;
+    private float _selfSoundFilterAngle = 40f;
     private bool _edgeFlashEnabled = true;
     private IntPtr _hwnd;
     private BandAnalysis[]? _currentBands;
@@ -1134,6 +1145,18 @@ public partial class OverlayWindow : Window
         return "Front-Left";
     }
 
+    private static Color FlashAngleToColor(float angleDeg)
+    {
+        float a = ((angleDeg % 360) + 360) % 360;
+        if (a < 90)
+            return LerpColor(FlashColorCenter, FlashColorRight, a / 90f);
+        if (a < 180)
+            return LerpColor(FlashColorRight, FlashColorRear, (a - 90f) / 90f);
+        if (a < 270)
+            return LerpColor(FlashColorRear, FlashColorLeft, (a - 180f) / 90f);
+        return LerpColor(FlashColorLeft, FlashColorCenter, (a - 270f) / 90f);
+    }
+
     private void DrawEdgeFlash(SoundEvent evt, double width, double height)
     {
         float decay = evt.GetDecayFactor();
@@ -1150,57 +1173,84 @@ public partial class OverlayWindow : Window
         if (evt.IsSurround)
         {
             angleDeg = evt.Angle;
-            baseColor = AngleToColor(evt.Angle);
+            baseColor = FlashAngleToColor(evt.Angle);
         }
         else
         {
             bool isLeft = evt.Pan < -CenterPanThreshold;
             bool isRight = evt.Pan > CenterPanThreshold;
-            baseColor = isLeft ? ColorLeft : isRight ? ColorRight : ColorCenter;
+            baseColor = isLeft ? FlashColorLeft : isRight ? FlashColorRight : FlashColorCenter;
             angleDeg = DirectionAnalyzer.PanToAngle(evt.Pan);
         }
 
         // Normalize angle to [0, 360)
         double a = ((angleDeg % 360) + 360) % 360;
 
-        byte alpha = (byte)(180 * flashFade * evt.Intensity);
+        // Intensity-based opacity and depth
+        bool isLoud = evt.Intensity > EdgeFlashLoudThreshold;
+        double maxOpacity = isLoud ? EdgeFlashLoudOpacity : EdgeFlashBaseOpacity;
+        double flashWidth = isLoud ? EdgeFlashWidthLoud : EdgeFlashWidth;
+
+        byte alpha = (byte)(255 * maxOpacity * flashFade * Math.Clamp(evt.Intensity + 0.3, 0, 1));
         var edgeColor = Color.FromArgb(alpha, baseColor.R, baseColor.G, baseColor.B);
         var transparent = Color.FromArgb(0, baseColor.R, baseColor.G, baseColor.B);
+        var borderColor = Color.FromArgb((byte)(255 * flashFade), baseColor.R, baseColor.G, baseColor.B);
+        var borderBrush = new SolidColorBrush(borderColor);
 
         // Determine edge: top (315-45), right (45-135), bottom (135-225), left (225-315)
         if (a >= 315 || a < 45)
         {
-            // Top edge
+            // Top edge — hard border line
+            var border = new Rectangle { Width = width, Height = EdgeFlashBorderThickness, Fill = borderBrush };
+            Canvas.SetLeft(border, 0);
+            Canvas.SetTop(border, 0);
+            OverlayCanvas.Children.Add(border);
+            // Gradient
             var brush = new LinearGradientBrush(edgeColor, transparent, 90);
-            var rect = new Rectangle { Width = width, Height = EdgeFlashWidth, Fill = brush };
+            var rect = new Rectangle { Width = width, Height = flashWidth, Fill = brush };
             Canvas.SetLeft(rect, 0);
-            Canvas.SetTop(rect, 0);
+            Canvas.SetTop(rect, EdgeFlashBorderThickness);
             OverlayCanvas.Children.Add(rect);
         }
         else if (a >= 45 && a < 135)
         {
-            // Right edge
+            // Right edge — hard border line
+            var border = new Rectangle { Width = EdgeFlashBorderThickness, Height = height, Fill = borderBrush };
+            Canvas.SetLeft(border, width - EdgeFlashBorderThickness);
+            Canvas.SetTop(border, 0);
+            OverlayCanvas.Children.Add(border);
+            // Gradient
             var brush = new LinearGradientBrush(edgeColor, transparent, 0);
-            var rect = new Rectangle { Width = EdgeFlashWidth, Height = height, Fill = brush };
-            Canvas.SetLeft(rect, width - EdgeFlashWidth);
+            var rect = new Rectangle { Width = flashWidth, Height = height, Fill = brush };
+            Canvas.SetLeft(rect, width - EdgeFlashBorderThickness - flashWidth);
             Canvas.SetTop(rect, 0);
             OverlayCanvas.Children.Add(rect);
         }
         else if (a >= 135 && a < 225)
         {
-            // Bottom edge
+            // Bottom edge — hard border line
+            var border = new Rectangle { Width = width, Height = EdgeFlashBorderThickness, Fill = borderBrush };
+            Canvas.SetLeft(border, 0);
+            Canvas.SetTop(border, height - EdgeFlashBorderThickness);
+            OverlayCanvas.Children.Add(border);
+            // Gradient
             var brush = new LinearGradientBrush(transparent, edgeColor, 90);
-            var rect = new Rectangle { Width = width, Height = EdgeFlashWidth, Fill = brush };
+            var rect = new Rectangle { Width = width, Height = flashWidth, Fill = brush };
             Canvas.SetLeft(rect, 0);
-            Canvas.SetTop(rect, height - EdgeFlashWidth);
+            Canvas.SetTop(rect, height - EdgeFlashBorderThickness - flashWidth);
             OverlayCanvas.Children.Add(rect);
         }
         else
         {
-            // Left edge (225-315)
+            // Left edge (225-315) — hard border line
+            var border = new Rectangle { Width = EdgeFlashBorderThickness, Height = height, Fill = borderBrush };
+            Canvas.SetLeft(border, 0);
+            Canvas.SetTop(border, 0);
+            OverlayCanvas.Children.Add(border);
+            // Gradient
             var brush = new LinearGradientBrush(transparent, edgeColor, 0);
-            var rect = new Rectangle { Width = EdgeFlashWidth, Height = height, Fill = brush };
-            Canvas.SetLeft(rect, 0);
+            var rect = new Rectangle { Width = flashWidth, Height = height, Fill = brush };
+            Canvas.SetLeft(rect, EdgeFlashBorderThickness);
             Canvas.SetTop(rect, 0);
             OverlayCanvas.Children.Add(rect);
         }

@@ -22,7 +22,7 @@ public class FrequencyBandsConfig
 public class SurroundConfig
 {
     public bool Enabled { get; set; } = true;
-    public float SelfSoundFilterAngle { get; set; } = 30f;
+    public float SelfSoundFilterAngle { get; set; } = 40f;
     public bool SelfSoundFilterEnabled { get; set; } = true;
     public Dictionary<string, float> ChannelAngles { get; set; } = new()
     {

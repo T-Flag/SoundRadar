@@ -97,13 +97,16 @@ dotnet run --project SoundRadar
 - Downmix FL+FR vers stéréo pour le pipeline FFT existant
 
 ## Self-sound filter (SelfSoundFilter)
-- Filtre les sons front-center (±30° par défaut) en mode surround uniquement
+- Filtre les sons front-center (±40° par défaut) en mode surround uniquement
 - `SelfSoundFilter.ShouldFilter(angle, isSurround, filterEnabled, filterAngle)`
 - Ne s'applique pas en mode stéréo (toujours false)
 - Toggle : `Ctrl+Shift+F`, angle configurable dans config.json
 
 ## Edge flash
-- Flash directionnel sur les bords d'écran (LinearGradientBrush, 80px, 300ms fade)
+- Flash directionnel sur les bords d'écran (150px normal, 200px pour sons forts >0.5, 500ms fade)
+- Bord dur : ligne 3px à 100% opacité collée au bord avant le dégradé
+- Opacité max : 0.7 (normal) / 0.9 (sons forts >0.5)
+- Couleurs vives : cyan #00E5FF, orange #FF9100, blanc #FFFFFF, magenta #FF00FF
 - Mapping angle → bord : haut (315°-45°), droite (45°-135°), bas (135°-225°), gauche (225°-315°)
 - Compatible software rendering (pas de BlurEffect)
 - Toggle : `Ctrl+Shift+B`
